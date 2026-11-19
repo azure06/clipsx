@@ -7,22 +7,18 @@ import { useUIStore } from '../../stores/uiStore'
 import type { ExtensionSettingsRequest } from '../../stores/uiStore'
 import type { PackageDetail } from '../settings/extensions/types'
 import type { AutomationRule } from './ExtensionConfiguration'
+import { AutomationAttemptList } from './AutomationAttemptList'
+import { automationOutcomeKey, retryAutomation, type AutomationAttempt } from './automationAttempts'
 import { humanLabel, parameterErrors, type SavedSetup } from './parameters'
 
 type Application = NonNullable<AutomationRule['application']>
-type Attempt = {
-  eventId: string
-  activationId: string
-  status: string
-  reasonCode: string | null
+type Rules = { revision: number; rules: AutomationRule[]; attempts?: AutomationAttempt[] }
+type RuleEvaluation = {
+  ruleId: string
   setupLabel: string
-  capturedAt: number
-}
-type Rules = { revision: number; rules: AutomationRule[]; attempts?: Attempt[] }
-type TestResult = {
-  selectedRuleId: string | null
-  setupLabel: string | null
-  evaluations: Array<{ ruleId: string; probability: number | null; matched: boolean }>
+  probability: number | null
+  matched: boolean
+  reasonCode: string | null
 }
 const surface =
   'rounded-xl border border-slate-200/70 bg-white/50 p-4 dark:border-white/10 dark:bg-white/[.025]'
@@ -71,7 +67,7 @@ export function AutomationEditor({
   const busyRef = useRef(false)
   const [loaded, setLoaded] = useState(false)
   const [sample, setSample] = useState('')
-  const [result, setResult] = useState<TestResult | null>(null)
+  const [result, setResult] = useState<RuleEvaluation[] | null>(null)
   const list = useRef<HTMLDivElement>(null)
   const addButton = useRef<HTMLButtonElement>(null)
   const editor = useRef<HTMLElement>(null)
@@ -250,28 +246,6 @@ export function AutomationEditor({
       await save(rules)
     })
   }
-  const attemptReason = (attempt: Attempt) => {
-    const outcomes = [
-      'scheduled',
-      'no_match',
-      'privacy_restricted',
-      'decision_unavailable',
-      'stale_context',
-      'ineligible',
-      'prepare_failed',
-      'enqueue_failed',
-      'guest_skipped',
-      'pending',
-      'completed',
-      'skipped',
-      'failed',
-    ] as const
-    const code =
-      outcomes.find(key => key === attempt.reasonCode) ??
-      outcomes.find(key => key === attempt.status) ??
-      'failed'
-    return t(`automationRules.outcome.${code}`)
-  }
   if (!detail.activations.length)
     return <p className={muted}>{t('desktopUi.thisExtensionDoesNotDeclareCaptureAutomation')}</p>
   return (
@@ -335,20 +309,6 @@ export function AutomationEditor({
             <p className="break-words text-sm leading-6">
               {rule.conditionQuestion ?? t('automationRules.always')}
             </p>
-            {!rule.conditionQuestion &&
-              rule.enabled &&
-              automation.rules
-                .slice(index + 1)
-                .some(
-                  next =>
-                    next.enabled &&
-                    next.activationId === rule.activationId &&
-                    appKey(next.application) === appKey(rule.application)
-                ) && (
-                <p className="text-xs leading-5 text-amber-700 dark:text-amber-300">
-                  {t('automationRules.shadows')}
-                </p>
-              )}
             {rule.reasonCode && <p className={muted}>{t('automationRules.setupUnavailable')}</p>}
             <div className="flex flex-wrap gap-1 border-t border-slate-200/70 pt-3 dark:border-white/10">
               <Button
@@ -610,7 +570,7 @@ export function AutomationEditor({
             void run(async () => {
               setResult(null)
               setResult(
-                await invoke<TestResult>('test_extension_automation', {
+                await invoke<RuleEvaluation[]>('test_extension_automation', {
                   packageId,
                   activationId,
                   rules: automation.rules,
@@ -625,25 +585,31 @@ export function AutomationEditor({
         </Button>
         {result && (
           <div role="status" className="space-y-2 rounded-xl bg-violet-500/5 p-4">
-            <p className="text-sm font-semibold">
-              {result.selectedRuleId
-                ? t('automationRules.testMatch', { setup: result.setupLabel })
-                : t('automationRules.testNoMatch')}
-            </p>
-            {result.evaluations.map((evaluation, index) => (
-              <p key={evaluation.ruleId} className={muted}>
-                {t('automationRules.testEvaluation', {
-                  number: index + 1,
-                  outcome: t(evaluation.matched ? 'decisionRules.match' : 'decisionRules.noMatch'),
-                  probability:
-                    evaluation.probability === null
-                      ? t('automationRules.always')
-                      : new Intl.NumberFormat(i18n.resolvedLanguage, {
-                          style: 'percent',
-                          maximumFractionDigits: 1,
-                        }).format(evaluation.probability),
-                })}
-              </p>
+            {result.length === 0 && <p className={muted}>{t('automationRules.testNoMatch')}</p>}
+            {result.map(evaluation => (
+              <div key={evaluation.ruleId}>
+                <p className="text-xs font-medium">
+                  {evaluation.matched
+                    ? t('automationRules.testMatch', { setup: evaluation.setupLabel })
+                    : evaluation.setupLabel}
+                </p>
+                <p className={muted}>
+                  {evaluation.reasonCode
+                    ? t(automationOutcomeKey(evaluation.reasonCode, 'failed'))
+                    : t('automationRules.testEvaluation', {
+                        outcome: t(
+                          evaluation.matched ? 'decisionRules.match' : 'decisionRules.noMatch'
+                        ),
+                        probability:
+                          evaluation.probability === null
+                            ? t('automationRules.always')
+                            : new Intl.NumberFormat(i18n.resolvedLanguage, {
+                                style: 'percent',
+                                maximumFractionDigits: 1,
+                              }).format(evaluation.probability),
+                      })}
+                </p>
+              </div>
             ))}
             <p className={muted}>{t('decisionRules.probabilityHelp')}</p>
           </div>
@@ -657,38 +623,16 @@ export function AutomationEditor({
               {t('automationRules.refresh')}
             </Button>
           </div>
-          {automation.attempts.map(attempt => (
-            <div
-              key={`${attempt.eventId}:${attempt.activationId}`}
-              className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/70 pt-3 dark:border-white/10"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="break-words text-xs font-medium">
-                  {attempt.setupLabel || t('automationRules.title')}
-                </p>
-                <p className={muted}>{attemptReason(attempt)}</p>
-              </div>
-              {attempt.status === 'failed' && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() =>
-                    void run(async () => {
-                      await invoke('retry_extension_automation', {
-                        packageId,
-                        eventId: attempt.eventId,
-                        activationId: attempt.activationId,
-                      })
-                      await refresh()
-                    })
-                  }
-                >
-                  {t('desktopUi.retry')}
-                </Button>
-              )}
-            </div>
-          ))}
+          <AutomationAttemptList
+            attempts={automation.attempts}
+            busy={busy}
+            onRetry={attempt =>
+              void run(async () => {
+                await retryAutomation(attempt)
+                await refresh()
+              })
+            }
+          />
         </section>
       )}
       {error && (

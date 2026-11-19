@@ -193,11 +193,22 @@ describe('ordered conditional automation rules', () => {
         return Promise.resolve(revision)
       }
       if (command === 'test_extension_automation')
-        return Promise.resolve({
-          selectedRuleId: rules[0]?.id,
-          setupLabel: 'Business',
-          evaluations: [{ ruleId: rules[0]?.id, probability: 0.7, matched: true }],
-        })
+        return Promise.resolve([
+          {
+            ruleId: rules[0]?.id,
+            setupLabel: 'Business',
+            probability: 0.7,
+            matched: true,
+            reasonCode: null,
+          },
+          {
+            ruleId: 'unconditional',
+            setupLabel: 'Summary',
+            probability: null,
+            matched: true,
+            reasonCode: null,
+          },
+        ])
       return Promise.resolve([])
     })
   })
@@ -261,6 +272,7 @@ describe('ordered conditional automation rules', () => {
     )
     await user.click(screen.getByRole('button', { name: 'Test rules' }))
     expect(await screen.findByText('Would run: Business')).toBeInTheDocument()
+    expect(screen.getByText('Would run: Summary')).toBeInTheDocument()
     expect(invoke).toHaveBeenCalledWith(
       'test_extension_automation',
       expect.objectContaining({ text: 'Hello, please review this draft', rules })

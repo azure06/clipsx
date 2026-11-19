@@ -195,6 +195,13 @@ const ensureEvents = () => {
     listen<ArtifactUpdate>('clip-artifacts-updated', event => {
       void refreshVisibleClip(event.payload.clipId).catch(() => undefined)
     }),
+    listen<string>('clip-automation-updated', event => {
+      void refreshVisibleClip(event.payload).catch(() => undefined)
+    }),
+    listen<{ clipId: string; status: string }>('extension-job-updated', event => {
+      if (event.payload.status === 'failed')
+        void refreshVisibleClip(event.payload.clipId).catch(() => undefined)
+    }),
     listen<CapturePrivacyStatus>('capture-privacy-status', event => {
       useClipboardStore.setState({
         privacyChecksPending: Math.max(0, Number(event.payload.pending) || 0),

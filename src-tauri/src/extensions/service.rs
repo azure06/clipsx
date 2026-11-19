@@ -1700,7 +1700,7 @@ impl ExtensionService {
                 .await?;
         sqlx::query("UPDATE extension_automation_rules SET enabled=0,reason_code='setup_deleted',revision=revision+1,updated_at=? WHERE setup_kind='saved' AND setup_ref=?")
             .bind(now_ms()).bind(id).execute(&mut *tx).await?;
-        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='automation_rule_disabled',claim_generation=claim_generation+1,completed_at=?,updated_at=? WHERE EXISTS(SELECT 1 FROM extension_automation_rules r WHERE r.package_id=extension_jobs.package_id AND r.rule_id=extension_jobs.automation_rule_id AND r.setup_kind='saved' AND r.setup_ref=?) AND status IN ('pending','running','waiting_provider','waiting_write_review')")
+        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='automation_rule_disabled',claim_generation=claim_generation+1,completed_at=?,updated_at=? WHERE EXISTS(SELECT 1 FROM extension_automation_rules r WHERE r.package_id=extension_jobs.package_id AND r.rule_id=extension_jobs.automation_rule_id AND r.setup_kind='saved' AND r.setup_ref=?) AND status IN ('pending','running','waiting_provider','waiting_write_review') AND NOT EXISTS(SELECT 1 FROM extension_jobs_with_enabled_automation a WHERE a.job_id=extension_jobs.id)")
             .bind(now_ms()).bind(now_ms()).bind(id).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM extension_transform_setups WHERE id=?")
             .bind(id)
@@ -4340,7 +4340,7 @@ impl ExtensionService {
         }
         sqlx::query("INSERT INTO extension_package_revisions(package_id,configuration_revision,grant_revision,updated_at) VALUES(?,?,1,?) ON CONFLICT(package_id) DO UPDATE SET configuration_revision=excluded.configuration_revision,updated_at=excluded.updated_at")
             .bind(package_id).bind(next).bind(now_ms()).execute(&mut *tx).await?;
-        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='automation_rule_disabled',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND automation_rule_id IS NOT NULL AND status IN ('pending','running','waiting_provider','waiting_write_review') AND NOT EXISTS(SELECT 1 FROM extension_automation_rules a WHERE a.package_id=extension_jobs.package_id AND a.rule_id=extension_jobs.automation_rule_id AND a.enabled=1 AND (a.app_platform IS NULL OR (a.app_platform=extension_jobs.app_platform AND a.app_id=extension_jobs.app_id)))")
+        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='automation_rule_disabled',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND automation_rule_id IS NOT NULL AND status IN ('pending','running','waiting_provider','waiting_write_review') AND NOT EXISTS(SELECT 1 FROM extension_jobs_with_enabled_automation a WHERE a.job_id=extension_jobs.id)")
             .bind(now_ms()).bind(now_ms()).bind(package_id).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(next)
@@ -4428,7 +4428,7 @@ impl ExtensionService {
         rules: Vec<super::ApplicationRule>,
         application: Option<super::SourceApplication>,
         text: String,
-    ) -> Result<super::automation::TestResult> {
+    ) -> Result<Vec<super::automation::RuleEvaluation>> {
         if rules.len() > 64 {
             bail!("automation_rule_limit");
         }
@@ -4458,21 +4458,7 @@ impl ExtensionService {
         tx.rollback().await?;
         let candidates = super::automation::ordered(candidates, application.as_ref());
         ai_test_input(&text)?;
-        tokio::time::timeout(
-            std::time::Duration::from_secs(120),
-            super::automation::evaluate(repo, &text, &candidates, None),
-        )
-        .await
-        .context("decision_timeout")?
-    }
-
-    pub async fn automation_attempts(
-        &self,
-        repo: &HistoryRepository,
-        package_id: &str,
-    ) -> Result<serde_json::Value> {
-        let rows=sqlx::query("SELECT event_id,activation_id,status,reason_code,setup_label,captured_at FROM extension_activation_events WHERE package_id=? ORDER BY captured_at DESC,event_id DESC LIMIT 20").bind(package_id).fetch_all(&repo.pool).await?;
-        Ok(serde_json::Value::Array(rows.iter().map(|r| serde_json::json!({"eventId":r.get::<String,_>(0),"activationId":r.get::<String,_>(1),"status":r.get::<String,_>(2),"reasonCode":r.get::<Option<String>,_>(3),"setupLabel":r.get::<String,_>(4),"capturedAt":r.get::<i64,_>(5)})).collect()))
+        Ok(super::automation::test_rules(repo, &text, &candidates).await)
     }
 
     pub async fn retry_automation(
@@ -4481,20 +4467,21 @@ impl ExtensionService {
         package_id: &str,
         event_id: &str,
         activation_id: &str,
-    ) -> Result<()> {
-        sqlx::query("UPDATE extension_activation_events SET status='pending',reason_code=NULL,lease_until=0,updated_at=? WHERE event_id=? AND package_id=? AND activation_id=? AND status='failed'")
-            .bind(now_ms()).bind(event_id).bind(package_id).bind(activation_id).execute(&repo.pool).await?;
-        Ok(())
+    ) -> Result<Option<String>> {
+        Ok(sqlx::query_scalar("UPDATE extension_activation_events SET status='pending',reason_code=NULL,lease_until=0,updated_at=? WHERE event_id=? AND package_id=? AND activation_id=? AND status='failed' RETURNING source_clip_id")
+            .bind(now_ms()).bind(event_id).bind(package_id).bind(activation_id).fetch_optional(&repo.pool).await?)
     }
 
     pub async fn enqueue_capture_automations(
         &self,
         repo: &HistoryRepository,
         clip_id: &str,
-    ) -> Result<usize> {
-        let events = sqlx::query("SELECT * FROM extension_activation_events WHERE status='pending' AND lease_until<=? AND (?='' OR source_clip_id=?) ORDER BY captured_at,event_id LIMIT 100")
-            .bind(now_ms()).bind(clip_id).bind(clip_id).fetch_all(&repo.pool).await?;
-        let mut processed = 0;
+    ) -> Result<Vec<String>> {
+        // Let the worker run a queued transformer between condition evaluations.
+        let limit = if clip_id.is_empty() { 1 } else { 100 };
+        let events = sqlx::query("SELECT * FROM extension_activation_events WHERE status='pending' AND lease_until<=? AND (?='' OR source_clip_id=?) ORDER BY captured_at,event_id LIMIT ?")
+            .bind(now_ms()).bind(clip_id).bind(clip_id).bind(limit).fetch_all(&repo.pool).await?;
+        let mut processed = Vec::new();
         for event in events {
             let event_id: String = event.get("event_id");
             let package_id: String = event.get("package_id");
@@ -4505,11 +4492,15 @@ impl ExtensionService {
             if claimed == 0 {
                 continue;
             }
-            processed += 1;
+            processed.push(source_clip_id.clone());
             let event=sqlx::query("SELECT * FROM extension_activation_events WHERE event_id=? AND package_id=? AND activation_id=?")
                 .bind(&event_id).bind(&package_id).bind(&activation_id).fetch_one(&repo.pool).await?;
             let claim: i64 = event.get("evaluation_claim");
-            let request_id = super::automation::request_id(&event_id, &package_id, &activation_id);
+            let request_id = event
+                .get::<Option<String>, _>("request_id")
+                .unwrap_or_else(|| {
+                    super::automation::request_id(&event_id, &package_id, &activation_id)
+                });
             if sqlx::query_scalar::<_, String>("SELECT id FROM extension_jobs WHERE request_id=? UNION SELECT job_id FROM extension_automation_dispatches WHERE request_id=? LIMIT 1")
                 .bind(&request_id).bind(&request_id)
                 .fetch_optional(&repo.pool)
@@ -4554,14 +4545,19 @@ impl ExtensionService {
                 outcome => {
                     let reason = match &outcome {
                         Ok(None) => "no_match",
-                        Err(error) if error.to_string() == "automation_privacy_restricted" => {
-                            "privacy_restricted"
-                        }
-                        Err(error) if error.to_string() == "automation_stale" => "stale_context",
-                        _ => "decision_unavailable",
+                        Err(error) => super::automation::decision_reason(error),
+                        Ok(Some(_)) => unreachable!("matching candidate handled above"),
+                    };
+                    let status = if matches!(
+                        reason,
+                        "no_match" | "no_text" | "privacy_restricted" | "stale_context"
+                    ) {
+                        "skipped"
+                    } else {
+                        "failed"
                     };
                     sqlx::query("UPDATE extension_activation_events SET status=?,reason_code=?,lease_until=0,updated_at=? WHERE event_id=? AND package_id=? AND activation_id=? AND evaluation_claim=? AND status='pending'")
-                        .bind(if outcome.is_ok() || reason=="privacy_restricted" || reason=="stale_context" { "skipped" } else { "failed" }).bind(reason).bind(now_ms()).bind(&event_id).bind(&package_id).bind(&activation_id).bind(claim).execute(&repo.pool).await?;
+                        .bind(status).bind(reason).bind(now_ms()).bind(&event_id).bind(&package_id).bind(&activation_id).bind(claim).execute(&repo.pool).await?;
                     continue;
                 }
             };
@@ -6120,6 +6116,12 @@ mod tests {
             "/v1/systemone",
             axum::routing::post(|bytes: axum::body::Bytes| async move {
                 let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                if body["questions"]
+                    .to_string()
+                    .contains("Should this fixture fail?")
+                {
+                    return "{}".to_owned();
+                }
                 let answers: serde_json::Map<String, serde_json::Value> = body["questions"]
                     .as_object()
                     .unwrap()
@@ -6160,15 +6162,19 @@ mod tests {
         second.setup_kind = "builtin".into();
         second.setup_ref = "business".into();
         let mut global = second.clone();
-        global.id = "global-fallback".into();
+        global.id = "global-business".into();
         global.application = None;
         global.order = 2;
+        let mut failed = global.clone();
+        failed.id = "independent-failure".into();
+        failed.order = 3;
+        failed.condition_question = Some("Should this fixture fail?".into());
         service
             .set_automation_rules(
                 &repo,
                 "infiniti.rewrite",
                 revision,
-                vec![rule, second, global],
+                vec![rule, second, global, failed],
             )
             .await
             .unwrap();
@@ -6177,10 +6183,10 @@ mod tests {
             .await
             .unwrap()
             .1;
-        assert_eq!(persisted.len(), 3);
+        assert_eq!(persisted.len(), 4);
         assert_eq!(
             persisted.iter().map(|rule| rule.order).collect::<Vec<_>>(),
-            vec![0, 1, 2]
+            vec![0, 1, 2, 3]
         );
         let capture = || crate::history::CapturedSnapshot {
             token: 1,
@@ -6231,7 +6237,7 @@ mod tests {
         repo.capture(capture(), &crate::history::CaptureSettings::default())
             .await
             .unwrap();
-        let snapshots = sqlx::query("SELECT parameters_json,setup_label,default_view,is_new_clip FROM extension_activation_events ORDER BY created_at,rowid").fetch_all(&repo.pool).await.unwrap();
+        let snapshots = sqlx::query("SELECT parameters_json,setup_label,default_view,is_new_clip FROM extension_activation_events WHERE rule_id='outlook-rule' ORDER BY created_at,rowid").fetch_all(&repo.pool).await.unwrap();
         assert_eq!(snapshots.len(), 2);
         assert!(snapshots[0].get::<String, _>(0).contains("Be concise"));
         assert_eq!(snapshots[0].get::<String, _>(1), "Rewrite · Technical");
@@ -6260,9 +6266,19 @@ mod tests {
         let jobs = super::super::jobs::list(&repo, &clip).await.unwrap();
         assert_eq!(
             jobs.len(),
-            2,
-            "editing the setup must not fence out an already accepted capture"
+            3,
+            "both saved setups run and identical Business attempts share one job"
         );
+        let outcomes: Vec<(String, i64)> = sqlx::query_as("SELECT status,count(*) FROM extension_activation_events WHERE source_clip_id=? GROUP BY status ORDER BY status")
+            .bind(&clip).fetch_all(&repo.pool).await.unwrap();
+        assert_eq!(
+            outcomes,
+            vec![("completed".into(), 6), ("failed".into(), 2)]
+        );
+        let shared: i64 = sqlx::query_scalar("SELECT max(attempts) FROM (SELECT count(*) AS attempts FROM extension_automation_dispatches GROUP BY job_id)")
+            .fetch_one(&repo.pool).await.unwrap();
+        assert_eq!(shared, 4);
+        assert!(repo.summary(&clip).await.unwrap().has_automation_failure);
         if std::env::var_os("CLIPSX_TEST_ALL_CLIPS").is_some() {
             let identified: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM extension_jobs WHERE source_clip_id=? AND app_id IS NOT NULL",
@@ -6320,7 +6336,7 @@ mod tests {
                 .fetch_one(&repo.pool)
                 .await
                 .unwrap();
-        assert_eq!(event_count, 2);
+        assert_eq!(event_count, 8);
         let reopened = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
             .await
             .unwrap();

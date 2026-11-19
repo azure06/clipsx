@@ -19,6 +19,7 @@ vi.mock('lucide-react', () => ({
   MessageSquare: () => <div data-testid="message-icon" />,
   Command: () => <div data-testid="command-icon" />,
   CornerDownLeft: () => <div data-testid="corner-icon" />,
+  CircleAlert: () => <div data-testid="automation-alert-icon" />,
   ScanText: () => <div data-testid="scan-icon" />,
   Binary: () => <div data-testid="binary-icon" />,
   Braces: () => <div data-testid="braces-icon" />,
@@ -94,6 +95,13 @@ const createImageClip = (overrides?: Partial<ClipSummary>): ClipSummary =>
   })
 
 describe('ClipboardListItem', () => {
+  it('marks automation failures in history', () => {
+    render(
+      <ClipboardListItem clip={createTextClip({ hasAutomationFailure: true })} onCopy={vi.fn()} />
+    )
+    expect(screen.getByTitle('Automation needs attention')).toBeInTheDocument()
+  })
+
   it('shows the secret type and mask while retaining the clip ID for copy', () => {
     const onCopy = vi.fn()
     const clip = createTextClip({

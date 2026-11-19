@@ -43,7 +43,10 @@ impl SingleWorker {
                 let processed = extensions
                     .enqueue_capture_automations(&history, "")
                     .await
-                    .unwrap_or(0);
+                    .unwrap_or_default();
+                for clip_id in &processed {
+                    let _ = app.emit("clip-automation-updated", clip_id);
+                }
                 match crate::extensions::jobs::run_next(&history, &extensions).await {
                     Ok(Some((job_id, clip_id))) => {
                         let status: Option<(String, Option<String>)> = sqlx::query_as(
@@ -57,7 +60,7 @@ impl SingleWorker {
                             let _ = app.emit("extension-job-updated", serde_json::json!({"jobId":job_id,"clipId":clip_id,"status":status,"reasonCode":reason_code}));
                         }
                     }
-                    Ok(None) if processed > 0 => continue,
+                    Ok(None) if !processed.is_empty() => continue,
                     Ok(None) => break,
                     Err(_) => {
                         crate::diagnostic!("extension.job.worker.failed");

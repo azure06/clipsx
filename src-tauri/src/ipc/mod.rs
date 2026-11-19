@@ -1335,12 +1335,26 @@ async fn get_extension_automation(
         .automation_rules(&state.history, &package_id)
         .await
         .map_err(|error| error.to_string())?;
-    let attempts = state
-        .extensions
-        .automation_attempts(&state.history, &package_id)
-        .await
-        .map_err(|_| "automation_status_unavailable".to_string())?;
+    let attempts = crate::extensions::automation::attempts(
+        &state.history,
+        crate::extensions::automation::AttemptScope::Package(&package_id),
+    )
+    .await
+    .map_err(|_| "automation_status_unavailable".to_string())?;
     Ok(serde_json::json!({"revision":revision,"rules":rules,"attempts":attempts}))
+}
+
+#[tauri::command]
+async fn list_clip_automation_attempts(
+    clip_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::extensions::automation::Attempt>, String> {
+    crate::extensions::automation::attempts(
+        &state.history,
+        crate::extensions::automation::AttemptScope::Clip(&clip_id),
+    )
+    .await
+    .map_err(|_| "automation_status_unavailable".into())
 }
 
 #[tauri::command]
@@ -1365,7 +1379,7 @@ async fn test_extension_automation(
     application: Option<crate::extensions::SourceApplication>,
     text: String,
     state: State<'_, AppState>,
-) -> Result<crate::extensions::automation::TestResult, String> {
+) -> Result<Vec<crate::extensions::automation::RuleEvaluation>, String> {
     state
         .extensions
         .test_automation_rules(
@@ -1387,11 +1401,14 @@ async fn retry_extension_automation(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    state
+    let clip_id = state
         .extensions
         .retry_automation(&state.history, &package_id, &event_id, &activation_id)
         .await
         .map_err(|_| "automation_retry_failed".to_string())?;
+    if let Some(clip_id) = clip_id {
+        let _ = app.emit("clip-automation-updated", &clip_id);
+    }
     crate::app::workers::wake_extensions(&app, state.history.clone(), state.extensions.clone());
     Ok(())
 }
@@ -3497,9 +3514,7 @@ pub(crate) fn run() {
                                         &id,
                                     )
                                     .await;
-                                    if detection_extensions.enqueue_capture_automations(&detection_history, &id).await.unwrap_or(0) > 0 {
-                                        crate::app::workers::wake_extensions(&detection_app, detection_history.clone(), detection_extensions.clone());
-                                    }
+                                    crate::app::workers::wake_extensions(&detection_app, detection_history.clone(), detection_extensions.clone());
                                     let _ =
                                         search::upsert_projection(&detection_history, &id).await;
                                     let _ = embeddings::enqueue_clip(&detection_history, &id).await;
@@ -3694,6 +3709,7 @@ crate::recall::ipc::recall_snapshot_image,
             save_extension_transform_setup,
             delete_extension_transform_setup,
             get_extension_automation,
+            list_clip_automation_attempts,
             set_extension_automation,
             test_extension_automation,
             retry_extension_automation,
