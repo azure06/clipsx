@@ -1,6 +1,7 @@
 import { render } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { ExtensionJobStatusIcon, jobStatusLabel } from './ExtensionJobStatus'
+import { ExtensionJobStatusIcon } from './ExtensionJobStatus'
+import { jobStatusLabel } from './jobStatusLabel'
 import { ExtensionOperationIcon } from './ExtensionOperationIcon'
 
 describe('compact extension indicators', () => {

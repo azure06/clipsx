@@ -2,7 +2,8 @@ import { useTranslation } from 'react-i18next'
 import { Layers } from 'lucide-react'
 import { SearchableSelect } from '../../shared/components/ui/SearchableSelect'
 import type { ExtensionJob } from './useClipExtensionJobs'
-import { ExtensionJobStatusIcon, jobStatusLabel } from './ExtensionJobStatus'
+import { ExtensionJobStatusIcon } from './ExtensionJobStatus'
+import { jobStatusLabel } from './jobStatusLabel'
 export function PreviewResultsPicker({
   jobs,
   selectedId,

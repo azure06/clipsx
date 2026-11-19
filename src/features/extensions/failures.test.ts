@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { describeFailure, failureMessage } from './failures'
-import { jobStatusLabel } from '../clipboard/ExtensionJobStatus'
+import { jobStatusLabel } from '../clipboard/jobStatusLabel'
 
 describe('safe operation failures', () => {
   it('preserves the specific reason after retry exhaustion', () => {

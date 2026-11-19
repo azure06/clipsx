@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../shared/components/ui'
-import { jobStatusLabel } from '../clipboard/ExtensionJobStatus'
+import { jobStatusLabel } from '../clipboard/jobStatusLabel'
 import { automationOutcomeKey, type AutomationAttempt } from './automationAttempts'
 import { describeFailure } from './failures'
 
