@@ -116,6 +116,7 @@ fn main() {
             "promote_extension_result",
             "list_source_applications",
             "get_extension_automation",
+            "list_clip_automation_attempts",
             "set_extension_automation",
             "test_extension_automation",
             "retry_extension_automation",
