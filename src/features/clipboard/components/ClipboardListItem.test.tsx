@@ -94,6 +94,25 @@ const createImageClip = (overrides?: Partial<ClipSummary>): ClipSummary =>
   })
 
 describe('ClipboardListItem', () => {
+  it('shows the secret type and mask while retaining the clip ID for copy', () => {
+    const onCopy = vi.fn()
+    const clip = createTextClip({
+      secretKind: 'github_token',
+      historyPreview: {
+        leading: { kind: 'host_icon', name: 'key' },
+        title: 'GitHub token · ••••••••',
+        subtitle: null,
+        badge: null,
+        accessibilityLabel: 'GitHub token, hidden',
+      },
+    })
+    render(<ClipboardListItem clip={clip} onCopy={onCopy} />)
+
+    expect(screen.getByText('GitHub token, hidden')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('••••••••'))
+    expect(onCopy).toHaveBeenCalledWith(clip.historyPreview.title, clip.id)
+  })
+
   it('should render a fallback icon for text clips with no explicit leading visual', () => {
     const clip = createTextClip()
     render(<ClipboardListItem clip={clip} onCopy={vi.fn()} onSelect={vi.fn()} />)

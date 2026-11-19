@@ -275,6 +275,8 @@ pub struct ClipSummary {
     pub note: Option<String>,
     pub tags: Vec<Tag>,
     pub history_preview: HistoryPreview,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_kind: Option<String>,
     pub representation_count: i64,
     pub primary_presentation_kind: String,
     pub thumbnail_asset_id: Option<String>,

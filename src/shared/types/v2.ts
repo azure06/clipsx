@@ -81,6 +81,7 @@ export type ClipSummary = {
   note: string | null
   tags: V2Tag[]
   historyPreview: HistoryPreview
+  secretKind?: string
   representationCount: number
   primaryPresentationKind: string
   thumbnailAssetId: string | null

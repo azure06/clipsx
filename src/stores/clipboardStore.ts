@@ -188,8 +188,9 @@ const ensureEvents = () => {
         void refreshVisibleClip(event.payload.clipId).catch(() => undefined)
         return
       }
-      const ids = useClipboardStore.getState().clips.map(clip => clip.id)
-      void Promise.all(ids.map(id => refreshVisibleClip(id))).catch(() => undefined)
+      const { clips, pinnedPreview } = useClipboardStore.getState()
+      const ids = new Set([...clips, ...pinnedPreview].map(clip => clip.id))
+      void Promise.all(Array.from(ids, id => refreshVisibleClip(id))).catch(() => undefined)
     }),
     listen<ArtifactUpdate>('clip-artifacts-updated', event => {
       void refreshVisibleClip(event.payload.clipId).catch(() => undefined)

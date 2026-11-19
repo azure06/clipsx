@@ -18,6 +18,7 @@ import { PreviewLeadingVisual } from './PreviewLeadingVisual'
 import { DecisionReviewNotice } from '../DecisionReviewNotice'
 import { TagBadge } from './TagBadge'
 import { Button } from '../../../shared/components/ui'
+import { secretKindKey } from '../secretKind'
 
 type ClipboardListItemProps = {
   readonly clip: ClipSummary
@@ -47,6 +48,10 @@ const ClipboardListItemComponent = ({
   const platform = getPlatform()
   const isMac = platform === 'macos'
   const preview = clip.historyPreview
+  const secretLabel = clip.secretKind ? t(secretKindKey(clip.secretKind)) : null
+  const accessibleTitle = secretLabel
+    ? t('clipboard.hiddenSecret', { label: secretLabel })
+    : preview.title
   const title = preview.title.length > 100 ? `${preview.title.slice(0, 100)}...` : preview.title
 
   const isPinned = Boolean(clip.isPinned)
@@ -113,7 +118,16 @@ const ClipboardListItemComponent = ({
             <div
               className={`truncate text-xs ${isSelected ? 'font-medium text-gray-800 dark:text-gray-100' : 'text-gray-600 dark:text-gray-400'}`}
             >
-              {title}
+              {secretLabel ? (
+                <>
+                  <span className="sr-only">{accessibleTitle}</span>
+                  <span aria-hidden="true">
+                    {secretLabel} · <span className="font-mono tracking-wider">••••••••</span>
+                  </span>
+                </>
+              ) : (
+                title
+              )}
             </div>
             {preview.subtitle && (
               <div className="truncate text-[10px] text-gray-400">{preview.subtitle}</div>
@@ -193,7 +207,7 @@ const ClipboardListItemComponent = ({
                 size="sm"
                 className="px-1 py-1 aria-disabled:opacity-40 aria-disabled:cursor-default"
                 aria-disabled={pinOrdering.saving || !pinOrdering.canMoveUp}
-                aria-label={t('clipboard.movePinUp', { title: preview.title })}
+                aria-label={t('clipboard.movePinUp', { title: accessibleTitle })}
                 title={t('clipboard.moveUp')}
                 onClick={() => {
                   if (!pinOrdering.saving && pinOrdering.canMoveUp)
@@ -207,7 +221,7 @@ const ClipboardListItemComponent = ({
                 size="sm"
                 className="px-1 py-1 aria-disabled:opacity-40 aria-disabled:cursor-default"
                 aria-disabled={pinOrdering.saving || !pinOrdering.canMoveDown}
-                aria-label={t('clipboard.movePinDown', { title: preview.title })}
+                aria-label={t('clipboard.movePinDown', { title: accessibleTitle })}
                 title={t('clipboard.moveDown')}
                 onClick={() => {
                   if (!pinOrdering.saving && pinOrdering.canMoveDown)

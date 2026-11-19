@@ -177,6 +177,7 @@
     }
   },
   "clipboard": {
+    "hiddenSecret": "{{label}}（非表示）",
     "manageTags": "タグを管理",
     "clipDetails": "詳細",
     "pinOrderHint": "矢印でピン留めの順序を変更できます。先頭の3件が履歴の上に表示されます。",
@@ -306,6 +307,7 @@
   "preview": {
     "searchDomain": "{{domain}} を検索",
     "secretKinds": {
+      "unknown": "機密情報",
       "awsAccessKey": "AWSアクセスキー",
       "githubToken": "GitHubトークン",
       "stripeKey": "Stripeキー",

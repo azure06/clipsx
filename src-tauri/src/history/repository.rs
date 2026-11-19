@@ -1,5 +1,5 @@
 use super::domain::*;
-use super::preview::{resolve_history_preview, PreviewContext};
+use super::preview::{resolve_history_preview, secret_history_preview, PreviewContext};
 use crate::clipboard::capabilities;
 
 use anyhow::{bail, Context, Result};
@@ -77,7 +77,7 @@ async fn enqueue_capture_intents(
 
 pub const CAPTURE_FINGERPRINT_VERSION: &str = "clipsx-capture-v1";
 
-const SUMMARY_SELECT: &str = "SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_index_jobs j JOIN search_index_generations g ON g.id=j.generation_id WHERE j.clip_id=c.id AND j.status='completed' AND g.status='active'),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' AND aj.producer_id='builtin.artifact.ocr' AND aj.producer_version='3' ORDER BY aj.requested_at DESC LIMIT 1),lead.id,lead.canonical_mime_type,lead.format_family,(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type='text/plain' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.storage_kind='text' AND r.canonical_mime_type='text/plain'),EXISTS(SELECT 1 FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND (r.storage_kind='file_list' OR r.storage_kind='text' OR r.canonical_mime_type LIKE 'image/%' OR r.canonical_mime_type IN ('application/pdf','image/svg+xml','text/html','text/rtf','application/rtf') OR r.format_family='office')),c.source_app_platform,c.pin_order FROM clip_items c LEFT JOIN (SELECT r1.clip_id AS clip_id,r1.id AS id,r1.canonical_mime_type AS canonical_mime_type,r1.format_family AS format_family FROM clip_representations r1 WHERE r1.lifecycle_state='ready' AND r1.id=(SELECT r2.id FROM clip_representations r2 WHERE r2.clip_id=r1.clip_id AND r2.lifecycle_state='ready' ORDER BY r2.capture_priority,r2.ordinal LIMIT 1)) lead ON lead.clip_id=c.id";
+const SUMMARY_SELECT: &str = "SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_index_jobs j JOIN search_index_generations g ON g.id=j.generation_id WHERE j.clip_id=c.id AND j.status='completed' AND g.status='active'),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' AND aj.producer_id='builtin.artifact.ocr' AND aj.producer_version='3' ORDER BY aj.requested_at DESC LIMIT 1),lead.id,lead.canonical_mime_type,lead.format_family,(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type='text/plain' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.storage_kind='text' AND r.canonical_mime_type='text/plain'),EXISTS(SELECT 1 FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND (r.storage_kind='file_list' OR r.storage_kind='text' OR r.canonical_mime_type LIKE 'image/%' OR r.canonical_mime_type IN ('application/pdf','image/svg+xml','text/html','text/rtf','application/rtf') OR r.format_family='office')),c.source_app_platform,c.pin_order,(SELECT COALESCE(CASE WHEN json_valid(f.payload_json) THEN CAST(json_extract(f.payload_json,'$.kind') AS TEXT) END,'secret') FROM content_clip_facets f WHERE f.clip_id=c.id AND f.facet_id='core.security.secret' ORDER BY (f.detector_id='core.security.secret') DESC,f.created_at DESC,f.source_representation_id,f.detector_id,f.detector_version LIMIT 1) AS secret_kind FROM clip_items c LEFT JOIN (SELECT r1.clip_id AS clip_id,r1.id AS id,r1.canonical_mime_type AS canonical_mime_type,r1.format_family AS format_family FROM clip_representations r1 WHERE r1.lifecycle_state='ready' AND r1.id=(SELECT r2.id FROM clip_representations r2 WHERE r2.clip_id=r1.clip_id AND r2.lifecycle_state='ready' ORDER BY r2.capture_priority,r2.ordinal LIMIT 1)) lead ON lead.clip_id=c.id";
 
 #[derive(Clone)]
 pub struct HistoryRepository {
@@ -700,22 +700,32 @@ impl HistoryRepository {
                 };
                 (ocr_text, file, facet)
             };
-        let history_preview = resolve_history_preview(
-            PreviewContext {
-                presentation_kind: &primary_presentation_kind,
-                leading_mime: leading_mime.as_deref(),
-                leading_format_family: leading_format_family.as_deref(),
-                text_snippet: text_snippet.as_deref(),
-                plain_text_fallback: plain_text_fallback.as_deref(),
-                has_thumbnail: thumbnail_asset_id.is_some(),
-                ocr_text: ocr_text.as_deref(),
-                file_name: file_name.as_deref(),
-                file_count,
-                facet_id: facet_id.as_deref(),
-                facet_display_name: facet_display_name.as_deref(),
-            },
-            compact_presentation.map(|(_, presentation)| presentation),
-        );
+        let secret_kind: Option<String> = row.get("secret_kind");
+        let (secret_kind, history_preview) = if let Some(kind) = secret_kind {
+            let (kind, preview) = secret_history_preview(&kind);
+            (Some(kind.to_string()), preview)
+        } else {
+            (
+                None,
+                resolve_history_preview(
+                    PreviewContext {
+                        presentation_kind: &primary_presentation_kind,
+                        leading_mime: leading_mime.as_deref(),
+                        leading_format_family: leading_format_family.as_deref(),
+                        text_snippet: text_snippet.as_deref(),
+                        plain_text_fallback: plain_text_fallback.as_deref(),
+                        has_thumbnail: thumbnail_asset_id.is_some(),
+                        ocr_text: ocr_text.as_deref(),
+                        file_name: file_name.as_deref(),
+                        file_count,
+                        facet_id: facet_id.as_deref(),
+                        facet_display_name: facet_display_name.as_deref(),
+                    },
+                    compact_presentation.map(|(_, presentation)| presentation),
+                ),
+            )
+        };
+        let history_renderer_id = history_renderer_id.filter(|_| secret_kind.is_none());
 
         Ok(ClipSummary {
             decision_reviews,
@@ -736,6 +746,7 @@ impl HistoryRepository {
             has_embedding: row.get::<i64, _>(12) != 0,
             ocr_status,
             history_preview,
+            secret_kind,
             history_renderer_id,
             tags,
         })
