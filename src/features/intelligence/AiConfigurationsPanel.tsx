@@ -305,7 +305,7 @@ export function AiConfigurationsPanel() {
                 disabled={busy}
                 onClick={() => setEditAssignments(!editAssignments)}
               >
-                {t(editAssignments ? 'common.close' : 'modelsWorkspace.edit')}
+                {t(editAssignments ? 'modelsWorkspace.done' : 'modelsWorkspace.edit')}
               </Button>
             </div>
             <div className="grid sm:grid-cols-2">

@@ -1740,6 +1740,7 @@
     "catalogEmpty": "Discover models to browse this connection. You can also add a model ID manually below.",
     "unknownPurpose": "Capability not reported",
     "activeTitle": "Active models",
+    "done": "Done",
     "savedTitle": "Saved configurations",
     "remove": "Remove",
     "removeProvider": "Remove provider {{name}}",
