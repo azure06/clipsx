@@ -17,14 +17,20 @@ const activeIndicatorClass =
 type SidebarProps = {
   onAccountClick: () => void
   onSettingsClick: () => void
+  recallRunning?: boolean
 }
 
-export const Sidebar = ({ onAccountClick, onSettingsClick }: SidebarProps) => {
+export const Sidebar = ({
+  onAccountClick,
+  onSettingsClick,
+  recallRunning = false,
+}: SidebarProps) => {
   const { t } = useTranslation()
   const activeView = useUIStore(state => state.activeView)
   const setActiveView = useUIStore(state => state.setActiveView)
   const authStatus = useAuthStore(state => state.status)
   const authEmail = useAuthStore(state => state.email)
+  const recallLabel = t(recallRunning ? 'recallPage.answerInProgress' : 'recallPage.title')
 
   const accountLabel = (() => {
     switch (authStatus) {
@@ -80,12 +86,18 @@ export const Sidebar = ({ onAccountClick, onSettingsClick }: SidebarProps) => {
 
         <button
           onClick={() => setActiveView('recall')}
-          title={t('recallPage.title')}
-          aria-label={t('recallPage.title')}
+          title={recallLabel}
+          aria-label={recallLabel}
           aria-current={activeView === 'recall' ? 'page' : undefined}
           className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50 ${activeView === 'recall' ? 'text-gray-900 dark:text-gray-100' : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-300'}`}
         >
           <MessagesSquare className="h-4 w-4" strokeWidth={1.5} />
+          {recallRunning && (
+            <span
+              aria-hidden="true"
+              className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-violet-500 motion-safe:animate-pulse dark:bg-violet-300"
+            />
+          )}
           {activeView === 'recall' && <span aria-hidden="true" className={activeIndicatorClass} />}
         </button>
 

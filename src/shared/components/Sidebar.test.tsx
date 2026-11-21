@@ -48,4 +48,13 @@ describe('Sidebar account indicator', () => {
 
     expect(onSettingsClick).toHaveBeenCalledOnce()
   })
+
+  it('indicates that Recall is answering and returns to it when clicked', () => {
+    render(
+      <Sidebar onAccountClick={onAccountClick} onSettingsClick={onSettingsClick} recallRunning />
+    )
+    const recall = screen.getByRole('button', { name: 'Recall is answering' })
+    fireEvent.click(recall)
+    expect(recall).toHaveAttribute('aria-current', 'page')
+  })
 })

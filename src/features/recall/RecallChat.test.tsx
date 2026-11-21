@@ -101,6 +101,78 @@ describe('Recall conversation runtime presentation', () => {
     view.rerender(<RecallChat {...handoff} />)
     expect(run).toHaveBeenCalledOnce()
   })
+
+  it.each(['finish in History', 'stop on return'])('keeps a stream alive to %s', async outcome => {
+    let finish = () => {}
+    const gate = new Promise<void>(resolve => {
+      finish = resolve
+    })
+    const onAbort = vi.fn(() => finish())
+    const onStart = vi.fn()
+    const chatProps = props()
+    const reply = {
+      content: [{ type: 'text' as const, text: 'The finished answer.' }],
+      status: { type: 'complete' as const, reason: 'stop' as const },
+    }
+    vi.mocked(createRecallAdapter).mockImplementation(options => ({
+      run: async function* ({ abortSignal }) {
+        onStart()
+        abortSignal.addEventListener('abort', onAbort, { once: true })
+        try {
+          yield { content: [{ type: 'text' as const, text: 'The partial answer.' }] }
+          await gate
+          if (!abortSignal.aborted) {
+            await options.onCheckpoint?.(fixtureContext().runId, reply, true)
+            yield reply
+          }
+        } finally {
+          abortSignal.removeEventListener('abort', onAbort)
+        }
+      },
+    }))
+    const view = (visible: boolean) => (
+      <>
+        <input aria-label="History search" hidden={visible} />
+        <div hidden={!visible} inert={!visible}>
+          <RecallChat {...chatProps} contextOpen={visible} />
+        </div>
+      </>
+    )
+    const { rerender } = render(view(true))
+    const input = screen.getByRole('textbox', { name: 'recallPage.message' })
+    fireEvent.change(input, { target: { value: 'Find my notes' } })
+    fireEvent.click(screen.getByRole('button', { name: 'recallPage.send' }))
+    expect(await screen.findByText('The partial answer.')).toBeVisible()
+
+    rerender(view(false))
+    const search = screen.getByRole('textbox', { name: 'History search' })
+    search.focus()
+    expect(onAbort).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'recallPage.stop' })).toBeNull()
+    if (outcome === 'finish in History') {
+      await act(() => {
+        finish()
+        return gate
+      })
+      expect(await screen.findByText('The finished answer.')).not.toBeVisible()
+      expect(chatProps.onComplete).toHaveBeenCalledOnce()
+      expect(search).toHaveFocus()
+    }
+
+    rerender(view(true))
+    expect(screen.getByRole('textbox', { name: 'recallPage.message' })).toBe(input)
+    if (outcome === 'stop on return') {
+      fireEvent.click(screen.getByRole('button', { name: 'recallPage.stop' }))
+      await waitFor(() => expect(onAbort).toHaveBeenCalledOnce())
+      expect(screen.queryByRole('button', { name: 'recallPage.stop' })).toBeNull()
+    } else {
+      expect(screen.getByText('The finished answer.')).toBeVisible()
+      expect(onAbort).not.toHaveBeenCalled()
+    }
+    expect(screen.getAllByText('recallPage.you')).toHaveLength(1)
+    expect(onStart).toHaveBeenCalledOnce()
+    expect(createRecallAdapter).toHaveBeenCalledOnce()
+  })
   it('keeps the running conversation mounted when its draft acquires a saved ID', async () => {
     const initialize = vi.fn()
     const run = vi.fn()

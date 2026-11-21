@@ -30,6 +30,8 @@ import {
 
 export interface RecallPageProps {
   onInitialAskConsumed?: () => void
+  onRunningChange?: (running: boolean) => void
+  visible?: boolean
   initialAsk?: boolean
   initialQuery?: string
   initialFilters?: ClipFilters
@@ -39,6 +41,8 @@ export function RecallPage({
   initialFilters = emptyFilters,
   initialAsk = false,
   onInitialAskConsumed,
+  onRunningChange,
+  visible = true,
 }: RecallPageProps) {
   const { t, i18n } = useTranslation()
   const { toast } = useToast()
@@ -70,13 +74,14 @@ export function RecallPage({
   const contextToggle = useRef<HTMLButtonElement | null>(null)
   const sidebarToggle = useRef<HTMLButtonElement | null>(null)
   const previewFocus = useRef<HTMLElement | null>(null)
+  if (!visible && deleteTargetId !== null) setDeleteTargetId(null)
   const threadAdapter = useMemo(() => createConversationThreadAdapter(), [])
   const search = useProgressiveSearch(
     query,
     filters,
     status?.semanticReady ?? false,
     undefined,
-    Boolean(query.trim()) && !running
+    visible && Boolean(query.trim()) && !running
   )
   const setFilters = (next: import('react').SetStateAction<ClipFilters>) => {
     search.invalidate()
@@ -130,7 +135,10 @@ export function RecallPage({
       if (config.status === 'fulfilled') setConfiguration(config.value)
       if ([state, filters, config, listed].some(result => result.status === 'rejected'))
         setError(true)
-      if (listed.status !== 'fulfilled') return
+      if (listed.status !== 'fulfilled') {
+        if (initialAsk) onInitialAskConsumed?.()
+        return
+      }
       const rows = listed.value
       setThreads(rows)
       setThreadOffset(rows.length)
@@ -163,7 +171,10 @@ export function RecallPage({
       }
     }
     void load().catch(() => {
-      if (active) setError(true)
+      if (active) {
+        setError(true)
+        if (initialAsk) onInitialAskConsumed?.()
+      }
     })
     const reload = () =>
       void Promise.all([
@@ -319,7 +330,10 @@ export function RecallPage({
     closePreview()
     setContextOpen(false)
     // Restore focus after the context content has been removed.
-    requestAnimationFrame(() => contextToggle.current?.focus())
+    requestAnimationFrame(() => {
+      const toggle = contextToggle.current
+      if (toggle && !toggle.closest('[inert]')) toggle.focus()
+    })
   }
   const scopeLabels = [
     filters.scope && filters.scope !== 'all'
@@ -726,14 +740,14 @@ export function RecallPage({
                   }
                 : undefined
             }
-            composerToolbar={composerToolbar}
+            composerToolbar={visible ? composerToolbar : null}
             composerAttachments={composerAttachments}
-            contextOpen={contextOpen}
+            contextOpen={visible && contextOpen}
             onContextOpen={openContext}
             onContextClose={closeContext}
             suggestions={suggestions}
             preview={
-              preview || previewLoading || previewFailed ? (
+              visible && (preview || previewLoading || previewFailed) ? (
                 <div className="flex h-full min-h-0 flex-col">
                   <div className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-200/60 p-2 dark:border-white/10">
                     <Button
@@ -787,7 +801,10 @@ export function RecallPage({
               setAsk(null)
               if (initialAsk) onInitialAskConsumed?.()
             }}
-            onRunning={setRunning}
+            onRunning={value => {
+              setRunning(value)
+              onRunningChange?.(value)
+            }}
             onComplete={() => {
               void reloadThreads().catch(() => undefined)
             }}
@@ -812,71 +829,79 @@ export function RecallPage({
       )}
       <div className="relative flex min-h-0 flex-1 gap-3 overflow-hidden">
         <div className="flex shrink-0">
-          <ThreadSidebar
-            threads={threads}
-            thread={thread}
-            busy={busy}
-            running={running}
-            open={sidebarOpen}
-            onSelectThread={id =>
-              void perform(async () => {
-                await changeThread(id)
-                if (window.innerWidth < 1024) setSidebarOpen(false)
-              })
-            }
-            onNewThread={() =>
-              void perform(async () => {
-                const fresh = createDraftConversation()
-                setDraft(fresh)
-                setThread(fresh.thread)
-                setDraftSeed('')
-                setQuery('')
-                setAttachments([])
-                setAttachmentLabels({})
-                setAsk(null)
-                await reloadThreads()
-                if (window.innerWidth < 1024) setSidebarOpen(false)
-              })
-            }
-            onLoadMore={() =>
-              void perform(async () => {
-                const more = await conversationStore.list(threadOffset)
-                setThreads(current => [...current, ...more])
-                setThreadOffset(threadOffset + more.length)
-              })
-            }
-            onRename={(id, title) =>
-              void perform(async () => {
-                await threadAdapter.rename(id, title)
-                if (thread?.id === id) setThread({ ...thread, title })
-                await reloadThreads()
-              })
-            }
-            onArchive={(id, archived) =>
-              void perform(async () => {
-                await (archived ? threadAdapter.unarchive(id) : threadAdapter.archive(id))
-                if (thread?.id === id) setThread({ ...thread, archived: !archived })
-                await reloadThreads()
-              })
-            }
-            onDelete={id => setDeleteTargetId(id)}
-            onClose={() => {
-              setSidebarOpen(false)
-              sidebarToggle.current?.focus()
-            }}
-          />
+          {visible && (
+            <ThreadSidebar
+              threads={threads}
+              thread={thread}
+              busy={busy}
+              running={running}
+              open={sidebarOpen}
+              onSelectThread={id =>
+                void perform(async () => {
+                  await changeThread(id)
+                  if (window.innerWidth < 1024) setSidebarOpen(false)
+                })
+              }
+              onNewThread={() =>
+                void perform(async () => {
+                  const fresh = createDraftConversation()
+                  setDraft(fresh)
+                  setThread(fresh.thread)
+                  setDraftSeed('')
+                  setQuery('')
+                  setAttachments([])
+                  setAttachmentLabels({})
+                  setAsk(null)
+                  await reloadThreads()
+                  if (window.innerWidth < 1024) setSidebarOpen(false)
+                })
+              }
+              onLoadMore={() =>
+                void perform(async () => {
+                  const more = await conversationStore.list(threadOffset)
+                  setThreads(current => [...current, ...more])
+                  setThreadOffset(threadOffset + more.length)
+                })
+              }
+              onRename={(id, title) =>
+                void perform(async () => {
+                  await threadAdapter.rename(id, title)
+                  if (thread?.id === id) setThread({ ...thread, title })
+                  await reloadThreads()
+                })
+              }
+              onArchive={(id, archived) =>
+                void perform(async () => {
+                  await (archived ? threadAdapter.unarchive(id) : threadAdapter.archive(id))
+                  if (thread?.id === id) setThread({ ...thread, archived: !archived })
+                  await reloadThreads()
+                })
+              }
+              onDelete={id => setDeleteTargetId(id)}
+              onClose={() => {
+                setSidebarOpen(false)
+                const toggle = sidebarToggle.current
+                if (toggle && !toggle.closest('[inert]')) toggle.focus()
+              }}
+            />
+          )}
         </div>
         <div className="min-h-0 min-w-0 flex-1">{chat}</div>
       </div>
       <Dialog.Root
-        open={deleteTargetId !== null}
+        open={visible && deleteTargetId !== null}
         onOpenChange={open => {
           if (!open) setDeleteTargetId(null)
         }}
       >
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-[90] bg-black/30" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 z-[91] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-slate-200 bg-slate-50 p-4 outline-none dark:border-white/10 dark:bg-slate-950">
+          <Dialog.Content
+            onCloseAutoFocus={event => {
+              if (!visible) event.preventDefault()
+            }}
+            className="fixed left-1/2 top-1/2 z-[91] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-slate-200 bg-slate-50 p-4 outline-none dark:border-white/10 dark:bg-slate-950"
+          >
             <Dialog.Title className="text-sm font-semibold">
               {t('recallPage.deleteThread')}
             </Dialog.Title>

@@ -1603,6 +1603,7 @@
     "citationValidationFailed": "The answer contained references that could not be verified. Your conversation and completed actions are saved. Inspect the sources or retry the answer.",
     "contextBlocked": "The request, including instructions and tool definitions, could not fit the available context. Your conversation and completed actions are saved. Check model limits in Advanced; reduce attachments or older conversation where applicable.",
     "title": "Recall",
+    "answerInProgress": "Recall is answering",
     "subtitle": "Find, understand, and work with your clipboard.",
     "find": "Find",
     "chat": "Chat",
