@@ -73,6 +73,7 @@ const ScreenLoading = () => {
 export const AppLayout = () => {
   const { t } = useTranslation()
   const activeView = useUIStore(state => state.activeView)
+  const recallVisible = activeView === 'recall'
   const setActiveView = useUIStore(state => state.setActiveView)
   const previewClipId = useUIStore(state => state.previewClipId)
   const setPreviewClipId = useUIStore(state => state.setPreviewClipId)
@@ -93,6 +94,8 @@ export const AppLayout = () => {
   const authUserId = useAuthStore(state => state.userId)
   const [textSearchStatus, setTextSearchStatus] = useState<TextEmbeddingStatus | null>(null)
   const [searchSources, setSearchSources] = useState<SearchSourceDescriptor[]>([])
+  const [recallOpened, setRecallOpened] = useState(recallVisible)
+  const [recallRunning, setRecallRunning] = useState(false)
   const [recallEntry, setRecallEntry] = useState<{
     id: string
     query: string
@@ -113,7 +116,14 @@ export const AppLayout = () => {
     clips.find(clip => clip.id === previewClipId) ??
     pinnedPreview.find(clip => clip.id === previewClipId) ??
     null
+  if (recallVisible && !recallOpened) setRecallOpened(true)
+
   const runRecall = useCallback(() => {
+    // A new History handoff changes the page key. Preserve any active or pending run.
+    if (recallRunning || recallEntry?.ask) {
+      setActiveView('recall')
+      return
+    }
     const parsed = parseSearch(useUIStore.getState().searchQuery)
     if (!parsed.query.trim()) return
     const { activeTab: scope, tagFilter } = useClipboardStore.getState()
@@ -133,7 +143,7 @@ export const AppLayout = () => {
       },
     })
     setActiveView('recall')
-  }, [setActiveView])
+  }, [recallEntry?.ask, recallRunning, setActiveView])
   const handlePreviewItem = useCallback(
     (clipId: string | null) => setPreviewClipId(clipId),
     [setPreviewClipId]
@@ -519,6 +529,7 @@ export const AppLayout = () => {
       <div className="flex flex-1 overflow-hidden">
         {/* 2. Sidebar (Left) */}
         <Sidebar
+          recallRunning={recallRunning}
           onAccountClick={() => openSettings('account')}
           onSettingsClick={() => openSettings('general')}
         />
@@ -617,18 +628,28 @@ export const AppLayout = () => {
               </div>
             )}
 
-            {activeView === 'recall' && (
-              <Suspense fallback={<ScreenLoading />}>
-                <RecallPage
-                  key={recallEntry?.id ?? 'recall'}
-                  initialQuery={recallEntry?.ask ? recallEntry.query : undefined}
-                  initialFilters={recallEntry?.ask ? recallEntry.filters : undefined}
-                  initialAsk={recallEntry?.ask ?? false}
-                  onInitialAskConsumed={() =>
-                    setRecallEntry(current => (current ? { ...current, ask: false } : null))
-                  }
-                />
-              </Suspense>
+            {recallOpened && (
+              <div
+                hidden={!recallVisible}
+                inert={!recallVisible}
+                className={recallVisible ? 'flex h-full min-h-0 flex-col' : undefined}
+              >
+                <Suspense fallback={<ScreenLoading />}>
+                  <RecallPage
+                    key={recallEntry?.id ?? 'recall'}
+                    visible={recallVisible}
+                    onRunningChange={setRecallRunning}
+                    initialQuery={recallEntry?.ask ? recallEntry.query : undefined}
+                    initialFilters={recallEntry?.ask ? recallEntry.filters : undefined}
+                    initialAsk={recallEntry?.ask ?? false}
+                    onInitialAskConsumed={() =>
+                      setRecallEntry(current =>
+                        current?.ask ? { ...current, ask: false } : current
+                      )
+                    }
+                  />
+                </Suspense>
+              </div>
             )}
 
             {activeView === 'settings' && (

@@ -198,6 +198,37 @@ describe('Recall workspace context', () => {
     expect(screen.getByTestId('chat-submission')).toBeEmptyDOMElement()
     expect(consumed).toHaveBeenCalledOnce()
   })
+  it('releases a pending History request when loading conversations fails', async () => {
+    const original = vi.mocked(invoke).getMockImplementation()!
+    vi.mocked(invoke).mockImplementation((command, args) =>
+      command === 'recall_thread_list'
+        ? Promise.reject(new Error('conversation list unavailable'))
+        : original(command, args)
+    )
+    const consumed = vi.fn()
+    render(<RecallPage initialAsk initialQuery="find notes" onInitialAskConsumed={consumed} />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('recallPage.operationFailed')
+    expect(consumed).toHaveBeenCalledOnce()
+    expect(screen.queryByTestId('chat-thread')).toBeNull()
+  })
+  it('keeps the composer draft and pauses its suggestions while Recall is hidden', async () => {
+    const { rerender } = render(<RecallPage />)
+    const input = await screen.findByRole('textbox', { name: 'recallPage.message' })
+    fireEvent.change(input, { target: { value: 'meeting notes' } })
+    rerender(<RecallPage visible={false} />)
+    expect(screen.getByRole('textbox', { name: 'recallPage.message' })).toBe(input)
+    expect(input).toHaveValue('meeting notes')
+    await act(() => new Promise(resolve => setTimeout(resolve, 100)))
+    expect(
+      vi.mocked(invoke).mock.calls.some(([command]) => command === 'assistant_search_clips')
+    ).toBe(false)
+    rerender(<RecallPage />)
+    await waitFor(() =>
+      expect(
+        vi.mocked(invoke).mock.calls.some(([command]) => command === 'assistant_search_clips')
+      ).toBe(true)
+    )
+  })
   it('uses the single composer for local suggestions without starting an agent', async () => {
     render(<RecallPage />)
     await screen.findByTestId('chat-submission')

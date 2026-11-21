@@ -29,9 +29,11 @@ const {
     sidebarProps: null as {
       onAccountClick: () => void
       onSettingsClick: () => void
+      recallRunning?: boolean
     } | null,
     settingsProps: null as { initialTab?: string } | null,
     clipboardHistoryProps: null as { onPreviewItem?: (clipId: string | null) => void } | null,
+    reportRecallRunning: undefined as ((value: boolean) => void) | undefined,
   },
 }))
 
@@ -70,7 +72,7 @@ vi.mock('../../shared/components/BottomBar', () => ({
 }))
 
 vi.mock('../../shared/components/Sidebar', () => ({
-  Sidebar: (props: { onAccountClick: () => void; onSettingsClick: () => void }) => {
+  Sidebar: (props: NonNullable<typeof testRefs.sidebarProps>) => {
     testRefs.sidebarProps = props
     return <div data-testid="sidebar" />
   },
@@ -109,17 +111,21 @@ vi.mock('../recall/RecallPage', () => ({
     initialFilters?: { scope?: string | null; tagId?: string | null }
     initialAsk?: boolean
     onInitialAskConsumed?: () => void
-  }) => (
-    <div
-      data-testid="recall-view"
-      data-query={props.initialQuery}
-      data-scope={props.initialFilters?.scope}
-      data-tag={props.initialFilters?.tagId}
-      data-submit={String(props.initialAsk)}
-    >
-      <button onClick={props.onInitialAskConsumed}>Consume request</button>
-    </div>
-  ),
+    onRunningChange?: (value: boolean) => void
+  }) => {
+    testRefs.reportRecallRunning = props.onRunningChange
+    return (
+      <div
+        data-testid="recall-view"
+        data-query={props.initialQuery}
+        data-scope={props.initialFilters?.scope}
+        data-tag={props.initialFilters?.tagId}
+        data-submit={String(props.initialAsk)}
+      >
+        <button onClick={props.onInitialAskConsumed}>Consume request</button>
+      </div>
+    )
+  },
 }))
 
 vi.mock('./UpdateBanner', () => ({
@@ -134,6 +140,7 @@ describe('AppLayout search focus ownership', () => {
     testRefs.sidebarProps = null
     testRefs.settingsProps = null
     testRefs.clipboardHistoryProps = null
+    testRefs.reportRecallRunning = undefined
     listenMock.mockImplementation(
       (eventName: string, handler: (event: { payload: unknown }) => void) => {
         const handlers = eventHandlers.get(eventName) ?? []
@@ -434,6 +441,43 @@ describe('AppLayout search focus ownership', () => {
     act(() => useUIStore.getState().setActiveView('recall'))
     expect(await screen.findByTestId('recall-view')).toHaveAttribute('data-submit', 'false')
     expect(invokeMock.mock.calls.some(([command]) => command === 'start_recall_turn')).toBe(false)
+  })
+
+  it('keeps active Recall mounted and makes History Ask return to that reply', async () => {
+    useUIStore.setState({ activeView: 'clipsx', searchQuery: 'first question' })
+    render(<AppLayout />)
+    expect(screen.queryByTestId('recall-view')).toBeNull()
+    fireEvent.keyDown(document.body, { key: 'Enter', ctrlKey: true })
+    const page = await screen.findByTestId('recall-view')
+    act(() => useUIStore.getState().setActiveView('clipsx'))
+    act(() => useUIStore.getState().setSearchQuery('second question'))
+    fireEvent.keyDown(document.body, { key: 'Enter', ctrlKey: true })
+    expect(screen.getByTestId('recall-view')).toBe(page)
+    expect(page).toHaveAttribute('data-query', 'first question')
+    act(() => testRefs.reportRecallRunning?.(true))
+    fireEvent.click(screen.getByRole('button', { name: 'Consume request' }))
+
+    act(() => useUIStore.getState().setActiveView('settings'))
+    expect(await screen.findByTestId('settings-view')).toBeVisible()
+    expect(screen.getByTestId('recall-view')).toBe(page)
+    expect(page).not.toBeVisible()
+    expect(page.closest('[hidden]')).toHaveAttribute('inert')
+    expect(testRefs.sidebarProps?.recallRunning).toBe(true)
+
+    act(() => useUIStore.getState().setActiveView('clipsx'))
+    const input = screen.getByPlaceholderText('Search clips or ask a question · @ for tags')
+    await waitFor(() => expect(input).toHaveFocus())
+    fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true })
+    expect(screen.getByTestId('recall-view')).toBe(page)
+    expect(page).toBeVisible()
+    expect(page).toHaveAttribute('data-submit', 'false')
+
+    act(() => useUIStore.getState().setActiveView('clipsx'))
+    act(() => testRefs.reportRecallRunning?.(false))
+    expect(testRefs.sidebarProps?.recallRunning).toBe(false)
+    fireEvent.keyDown(document.body, { key: 'Enter', ctrlKey: true })
+    expect(screen.getByTestId('recall-view')).not.toBe(page)
+    expect(screen.getByTestId('recall-view')).toHaveAttribute('data-query', 'second question')
   })
 
   it('does not install a duplicate clip invalidation controller in the layout', () => {
