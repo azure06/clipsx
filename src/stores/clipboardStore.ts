@@ -625,16 +625,24 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
   },
   deleteAvailableTag: async tagId => {
     await invoke('delete_tag', { tagId })
-    const wasActive = useClipboardStore.getState().tagFilter === tagId
+    const before = useClipboardStore.getState()
+    const withoutTag = (clip: ClipSummary) =>
+      clip.tags?.some(tag => tag.id === tagId)
+        ? { ...clip, tags: clip.tags.filter(tag => tag.id !== tagId) }
+        : clip
     set(state => ({
       tagFilter: state.tagFilter === tagId ? null : state.tagFilter,
       availableTags: state.availableTags.filter(tag => tag.id !== tagId),
-      clips: state.clips.map(clip => ({
-        ...clip,
-        tags: clip.tags?.filter(tag => tag.id !== tagId),
-      })),
+      clips: state.clips.map(withoutTag),
+      pinnedPreview: state.pinnedPreview.map(withoutTag),
     }))
-    if (wasActive) await useClipboardStore.getState().retryResults()
+    const current = useClipboardStore.getState()
+    await Promise.all([
+      before.tagFilter === tagId || current.mode === 'search' || current.loading
+        ? current.retryResults()
+        : undefined,
+      current.pinnedPreviewLoading ? current.refreshPinnedPreview() : undefined,
+    ])
   },
   deleteClip: async id => {
     if (useClipboardStore.getState().resultsStale) return

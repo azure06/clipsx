@@ -20,6 +20,11 @@ following its rounded border. The previous results remain visible and temporaril
 inert until replacement succeeds. The beam stops on completion or failure;
 reduced-motion preferences replace its movement with a static border.
 
+In History, type `@` to pick a tag, then search within that tag or browse its
+clips with an empty query. The search chip and Tags dropdown share one active
+filter. **Tags → Manage tags** lets you delete a tag from every clip after
+confirmation. The clips stay saved.
+
 ## Data flow
 
 ```mermaid

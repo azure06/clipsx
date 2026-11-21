@@ -22,6 +22,91 @@ afterEach(() => {
 })
 
 describe('search input scheduling', () => {
+  it('selects a tag by keyboard and searches within it while preserving preceding text', async () => {
+    invokeMock.mockImplementation(command =>
+      Promise.resolve(
+        command === 'list_tags'
+          ? [
+              { id: 'archive', name: 'Archives', color: null },
+              { id: 'project', name: 'Project archive', color: null },
+            ]
+          : { items: [], nextCursor: null, sourceOutcomes: [] }
+      )
+    )
+    render(<SearchController />)
+    const input = screen.getByRole('combobox')
+    fireEvent.change(input, { target: { value: 'invoice @ARCH' } })
+    await act(() => vi.advanceTimersByTimeAsync(0))
+    expect(invokeMock).toHaveBeenCalledWith('list_tags')
+    expect(screen.getByRole('option', { name: 'Archives' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    expect(useClipboardStore.getState().tagFilter).toBeNull()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await act(() => vi.advanceTimersByTimeAsync(75))
+    expect(input).toHaveValue('invoice')
+    expect(input).toHaveFocus()
+    expect(screen.queryByRole('listbox')).toBeNull()
+    expect(invokeMock).toHaveBeenCalledWith('search_clips', {
+      request: expect.objectContaining({ query: 'invoice', tagId: 'project' }) as unknown,
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Clear Project archive tag filter' }))
+    await act(() => vi.advanceTimersByTimeAsync(0))
+    expect(invokeMock).toHaveBeenLastCalledWith('search_clips', {
+      request: expect.objectContaining({ query: 'invoice', tagId: null }) as unknown,
+    })
+  })
+
+  it('shares the selected filter with History and browses tagged clips without a text query', async () => {
+    const tags = [{ id: 'projects', name: 'Projects', color: null }]
+    useClipboardStore.setState({ availableTags: tags })
+    invokeMock.mockImplementation(command =>
+      Promise.resolve(command === 'list_tags' ? tags : { items: [], nextCursor: null })
+    )
+    render(<SearchController />)
+    const input = screen.getByRole('combobox')
+    fireEvent.change(input, { target: { value: '@' } })
+    fireEvent.click(screen.getByRole('option', { name: 'Projects' }))
+    await act(() => vi.advanceTimersByTimeAsync(75))
+    expect(input).toHaveValue('')
+    expect(invokeMock).toHaveBeenLastCalledWith('list_clips', {
+      request: expect.objectContaining({ tagId: 'projects' }) as unknown,
+    })
+    fireEvent.keyDown(input, { key: 'Backspace' })
+    await act(() => vi.advanceTimersByTimeAsync(0))
+    expect(useClipboardStore.getState().tagFilter).toBeNull()
+    await act(() => useClipboardStore.getState().setTagFilter('projects'))
+    expect(screen.getByRole('button', { name: 'Clear Projects tag filter' })).toBeVisible()
+  })
+
+  it('leaves email addresses in the search query and can dismiss tag suggestions', async () => {
+    invokeMock.mockImplementation(command =>
+      Promise.resolve(
+        command === 'list_tags' ? [] : { items: [], nextCursor: null, sourceOutcomes: [] }
+      )
+    )
+    render(<SearchController />)
+    const input = screen.getByRole('combobox')
+    fireEvent.change(input, { target: { value: 'name@example.com' } })
+    expect(screen.queryByRole('listbox')).toBeNull()
+    await act(() => vi.advanceTimersByTimeAsync(75))
+    expect(invokeMock).toHaveBeenCalledWith('search_clips', {
+      request: expect.objectContaining({ query: 'name@example.com', tagId: null }) as unknown,
+    })
+    fireEvent.change(input, { target: { value: '@literal' } })
+    expect(screen.getByRole('listbox')).toBeVisible()
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(input).toHaveFocus()
+    expect(screen.queryByRole('listbox')).toBeNull()
+    await act(() => vi.advanceTimersByTimeAsync(75))
+    expect(invokeMock).toHaveBeenLastCalledWith('search_clips', {
+      request: expect.objectContaining({ query: '@literal', tagId: null }) as unknown,
+    })
+  })
+
   it('shows every character immediately but submits only after 75 ms idle', async () => {
     render(<SearchController />)
     const input = screen.getByRole('combobox')
