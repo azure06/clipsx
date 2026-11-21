@@ -1,6 +1,6 @@
 //! Device-local capture rules. Evaluate in memory, then commit labels with the clip.
 use super::{configuration, decision};
-use crate::history::{new_id, now_ms, CapturedPayload, CapturedSnapshot, HistoryRepository};
+use crate::history::{now_ms, CapturedPayload, CapturedSnapshot, HistoryRepository};
 use anyhow::{bail, Context, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -383,10 +383,15 @@ impl CaptureDecision {
                 .bind(self.favorite).bind(self.pinned).bind(now_ms()).bind(clip_id).execute(&mut *tx).await?;
         }
         for tag in &self.tags {
-            sqlx::query("INSERT INTO catalog_tags(id,name,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(name) DO NOTHING")
-                .bind(new_id()).bind(tag.trim()).bind(now_ms()).bind(now_ms()).execute(&mut *tx).await?;
-            sqlx::query("INSERT INTO catalog_clip_tags(clip_id,tag_id,created_at) SELECT ?,id,? FROM catalog_tags WHERE name=? ON CONFLICT DO NOTHING")
-                .bind(clip_id).bind(now_ms()).bind(tag.trim()).execute(&mut *tx).await?;
+            let tag = HistoryRepository::get_or_create_tag_in(tx, tag.trim(), None).await?;
+            sqlx::query(
+                "INSERT OR IGNORE INTO catalog_clip_tags(clip_id,tag_id,created_at) VALUES(?,?,?)",
+            )
+            .bind(clip_id)
+            .bind(tag.id)
+            .bind(now_ms())
+            .execute(&mut *tx)
+            .await?;
         }
         Ok(())
     }

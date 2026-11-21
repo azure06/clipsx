@@ -110,6 +110,61 @@ fn organization_request(clip: ClipMetadata) -> OrganizeClipsRequest {
 }
 
 #[tokio::test]
+async fn tag_creation_preserves_case_and_resolves_variants_atomically() {
+    let (_temp, service) = repository().await;
+    let history = &service.history;
+    let original = history.create_tag("Équipe".into(), None).await.unwrap();
+    assert_eq!(original.name, "Équipe");
+    let concurrent = tokio::join!(
+        history.create_tag("GitHub".into(), None),
+        history.create_tag("github".into(), None)
+    );
+    assert_eq!(concurrent.0.unwrap().id, concurrent.1.unwrap().id);
+    assert_eq!(
+        history.create_tag("équipe".into(), None).await.unwrap().id,
+        original.id
+    );
+
+    sqlx::query(
+        "INSERT INTO catalog_tags(id,name,created_at,updated_at) VALUES('legacy','équipe',0,0)",
+    )
+    .execute(&history.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        history.create_tag("équipe".into(), None).await.unwrap().id,
+        "legacy"
+    );
+    assert_eq!(
+        history.create_tag("Équipe".into(), None).await.unwrap().id,
+        original.id
+    );
+    assert_eq!(history.tags().await.unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn organize_reuses_tags_and_removes_memberships_across_case() {
+    let (_temp, service) = repository().await;
+    let tag = service.history.create_tag("AI".into(), None).await.unwrap();
+    let clip_id = capture(&service, "tagged content", "editor", 100).await;
+    let actor = super::mutations::Actor::native();
+    let mut patch = organization_request(service.metadata(&clip_id).await.unwrap());
+    patch.add_tags = Some(vec!["ai".into(), "Ai".into()]);
+    service.organize(&actor, patch).await.unwrap();
+    let clip = service.metadata(&clip_id).await.unwrap();
+    assert_eq!(clip.tags.len(), 1);
+    assert_eq!(clip.tags[0].id, tag.id);
+    assert_eq!(clip.tags[0].name, "AI");
+    assert_eq!(service.history.tags().await.unwrap().len(), 1);
+
+    let mut patch = organization_request(clip);
+    patch.add_tags = None;
+    patch.remove_tags = Some(vec!["ai".into()]);
+    service.organize(&actor, patch).await.unwrap();
+    assert!(service.metadata(&clip_id).await.unwrap().tags.is_empty());
+}
+
+#[tokio::test]
 async fn mutations_are_idempotent_atomic_and_restart_safe_with_guarded_undo() {
     use super::mutations::{process_index_intents, Actor};
     let (_temp, service) = repository().await;

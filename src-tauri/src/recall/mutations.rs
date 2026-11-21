@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     failure::FailureCode,
-    history::{new_id, now_ms, sha256},
+    history::{new_id, now_ms, sha256, HistoryRepository},
     search::enqueue_index_intent as intent,
 };
 use anyhow::{Context, Result};
@@ -193,6 +193,17 @@ impl ClipboardService {
         {
             return Ok(result);
         }
+        let mut remove_ids = HashSet::new();
+        for name in &remove {
+            if let Some(tag) = HistoryRepository::find_tag_in(&mut tx, name).await? {
+                remove_ids.insert(tag.id);
+            }
+        }
+        let mut add_ids = HashSet::new();
+        for name in &add {
+            let tag = HistoryRepository::get_or_create_tag_in(&mut tx, name, None).await?;
+            add_ids.insert(tag.id);
+        }
         let mut ids = HashSet::new();
         let mut before = Vec::new();
         // Validate the entire batch while holding the write transaction, before any mutation.
@@ -205,28 +216,29 @@ impl ClipboardService {
                 return Err(FailureCode::StaleContext.failure().into());
             }
             before.push(organization(&mut tx, &target.clip_id).await?);
-            let count = clip
+            let retained = clip
                 .tags
                 .iter()
-                .filter(|t| !remove.contains(&t.name))
-                .count()
-                + add
-                    .iter()
-                    .filter(|t| !clip.tags.iter().any(|c| &c.name == *t))
-                    .count();
-            if count > 64 {
+                .map(|tag| &tag.id)
+                .filter(|id| !remove_ids.contains(*id))
+                .collect::<HashSet<_>>();
+            if retained.len() + add_ids.iter().filter(|id| !retained.contains(id)).count() > 64 {
                 return Err(FailureCode::ResourceLimit.failure().into());
             }
         }
         let now = now_ms();
         for target in &request.clips {
             sqlx::query("UPDATE clip_items SET note=COALESCE(?,note),is_favorite=COALESCE(?,is_favorite),is_pinned=COALESCE(?,is_pinned),updated_at=? WHERE id=?").bind(&request.note).bind(request.favorite).bind(request.pinned).bind(now).bind(&target.clip_id).execute(&mut *tx).await?;
-            for name in &remove {
-                sqlx::query("DELETE FROM catalog_clip_tags WHERE clip_id=? AND tag_id IN (SELECT id FROM catalog_tags WHERE name=?)").bind(&target.clip_id).bind(name).execute(&mut *tx).await?;
+            for tag_id in &remove_ids {
+                sqlx::query("DELETE FROM catalog_clip_tags WHERE clip_id=? AND tag_id=?")
+                    .bind(&target.clip_id)
+                    .bind(tag_id)
+                    .execute(&mut *tx)
+                    .await?;
             }
-            for name in &add {
-                sqlx::query("INSERT INTO catalog_tags(id,name,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(name) DO NOTHING").bind(new_id()).bind(name).bind(now).bind(now).execute(&mut *tx).await?;
-                sqlx::query("INSERT OR IGNORE INTO catalog_clip_tags(clip_id,tag_id,created_at) SELECT ?,id,? FROM catalog_tags WHERE name=?").bind(&target.clip_id).bind(now).bind(name).execute(&mut *tx).await?;
+            for tag_id in &add_ids {
+                sqlx::query("INSERT OR IGNORE INTO catalog_clip_tags(clip_id,tag_id,created_at) VALUES(?,?,?)")
+                    .bind(&target.clip_id).bind(tag_id).bind(now).execute(&mut *tx).await?;
             }
             intent(&mut tx, &target.clip_id).await?;
         }
