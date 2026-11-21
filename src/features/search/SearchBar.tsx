@@ -15,16 +15,19 @@ import {
   SlidersHorizontal,
   Check,
   Loader2,
+  Tags,
 } from 'lucide-react'
-import { forwardRef, useRef, useEffect, useState, useImperativeHandle } from 'react'
+import { forwardRef, useRef, useEffect, useId, useState, useImperativeHandle } from 'react'
 import { getPlatform } from '../../shared/keyboard/shortcuts'
 import type {
   SearchSourceDescriptor,
   SearchSourceOutcome,
   TextEmbeddingStatus,
+  V2Tag,
 } from '../../shared/types/v2'
 import { useTranslation } from 'react-i18next'
 import {
+  Button,
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
@@ -107,6 +110,12 @@ interface SearchBarProps {
   onScopeChange?: (scope: ScopeCommand) => void
   /** The active tab scope from the sidebar — renders as a removable pill */
   activeScope?: ScopeCommand
+  tags?: readonly V2Tag[]
+  activeTag?: V2Tag
+  onTagChange?: (id: string | null) => Promise<void>
+  onLoadTags?: () => Promise<void>
+  tagsLoading?: boolean
+  tagsLoadError?: boolean
   placeholder?: string
   autoFocus?: boolean
   isUpdatingResults?: boolean
@@ -135,6 +144,12 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
     onClear,
     onScopeChange,
     activeScope,
+    tags = [],
+    activeTag,
+    onTagChange,
+    onLoadTags,
+    tagsLoading,
+    tagsLoadError,
     placeholder,
     autoFocus = true,
     isUpdatingResults = false,
@@ -154,9 +169,12 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
   ref
 ) {
   const { t } = useTranslation()
+  const suggestionsId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
   const [isInputFocused, setIsInputFocused] = useState(false)
   const [selectedFilterIndex, setSelectedFilterIndex] = useState(0)
+  const [dismissedTagQuery, setDismissedTagQuery] = useState<string | null>(null)
+  const [isComposing, setIsComposing] = useState(false)
   const lastAppliedScopeValueRef = useRef<string | null>(null)
   const isSemanticIndexing = Boolean(
     semanticStatus?.pendingSpaceId || (semanticStatus?.pendingJobs ?? 0) > 0
@@ -215,6 +233,27 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
     ? value.slice(value.indexOf(activeCommand.prefix) + activeCommand.prefix.length).trimStart()
     : value
 
+  // Only recognize @ at a word boundary so pasted email addresses stay literal.
+  const tagToken = displayValue.match(/(?:^|\s)@([^\s@]*)$/)
+  const showTagMenu = Boolean(
+    onTagChange && isInputFocused && !isComposing && tagToken && dismissedTagQuery !== value
+  )
+  const tagQuery = tagToken?.[1]?.toLowerCase() ?? ''
+  const matchingTags = showTagMenu
+    ? tags.filter(tag => tag.name.toLowerCase().includes(tagQuery))
+    : []
+  const activeTagIndex = Math.min(selectedFilterIndex, Math.max(matchingTags.length - 1, 0))
+  const activeSuggestion = showTagMenu
+    ? matchingTags.length
+      ? activeTagIndex
+      : null
+    : showFilterMenu
+      ? activeFilterIndex
+      : null
+  useEffect(() => {
+    if (showTagMenu) void onLoadTags?.()
+  }, [showTagMenu, onLoadTags])
+
   // Scope commands from typed input: strip and call onScopeChange
   useEffect(() => {
     if (!activeCommand || activeCommand.kind !== 'scope') {
@@ -235,7 +274,47 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
   const hasScopePill = activeScope && activeScope !== 'all'
   const scopePillConfig = hasScopePill ? SCOPE_OPTIONS.find(opt => opt.scope === activeScope) : null
 
+  const selectTag = (tag: V2Tag) => {
+    if (!tagToken) return
+    const rest = displayValue.slice(0, tagToken.index).trimEnd()
+    onChange(activeCommand ? `${activeCommand.prefix} ${rest}`.trimEnd() : rest)
+    void onTagChange?.(tag.id)
+    inputRef.current?.focus()
+  }
+
+  const clearTag = () => {
+    void onTagChange?.(null)
+    inputRef.current?.focus()
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.nativeEvent.isComposing || isComposing) return
+    if (showTagMenu) {
+      const tag = matchingTags[activeTagIndex]
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        setDismissedTagQuery(value)
+        return
+      }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        e.stopPropagation()
+        const next = Math.max(
+          0,
+          Math.min(activeTagIndex + (e.key === 'ArrowDown' ? 1 : -1), matchingTags.length - 1)
+        )
+        setSelectedFilterIndex(next)
+        document.getElementById(`${suggestionsId}-${next}`)?.scrollIntoView?.({ block: 'nearest' })
+        return
+      }
+      if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault()
+        e.stopPropagation()
+        if (tag) selectTag(tag)
+        return
+      }
+    }
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing && !e.repeat) {
       e.preventDefault()
       e.stopPropagation()
@@ -273,6 +352,9 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
     if (e.key === 'Backspace' && displayValue === '' && activeCommand) {
       e.preventDefault()
       onChange('')
+    } else if (e.key === 'Backspace' && value === '' && activeTag) {
+      e.preventDefault()
+      clearTag()
     } else if (e.key === 'Backspace' && value === '' && hasScopePill) {
       // Clear active scope pill when input is empty
       e.preventDefault()
@@ -330,6 +412,25 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
           </div>
         )}
 
+        {activeTag && (
+          <div
+            className="ml-2 flex min-w-0 max-w-28 shrink items-center gap-1 rounded-md bg-violet-500/10 px-2 py-1.5 text-sm font-medium text-violet-700 dark:text-violet-200"
+            title={activeTag.name}
+          >
+            <Tags aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{activeTag.name}</span>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="shrink-0 rounded p-0.5 text-current"
+              aria-label={t('search.clearTag', { name: activeTag.name })}
+              onClick={clearTag}
+            >
+              <X aria-hidden="true" className="h-3 w-3" />
+            </Button>
+          </div>
+        )}
+
         {/* The Input */}
         <input
           data-recall-input="main"
@@ -337,11 +438,15 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
           type="text"
           role="combobox"
           aria-autocomplete="list"
-          aria-expanded={showFilterMenu}
-          aria-controls={showFilterMenu ? 'search-command-listbox' : undefined}
-          aria-activedescendant={showFilterMenu ? `search-command-${activeFilterIndex}` : undefined}
+          aria-expanded={showTagMenu || showFilterMenu}
+          aria-controls={showTagMenu || showFilterMenu ? suggestionsId : undefined}
+          aria-activedescendant={
+            activeSuggestion !== null ? `${suggestionsId}-${activeSuggestion}` : undefined
+          }
           value={displayValue}
           onChange={e => {
+            setSelectedFilterIndex(0)
+            setDismissedTagQuery(null)
             if (activeCommand) {
               if (activeCommand.kind === 'scope') {
                 onChange(e.target.value)
@@ -353,16 +458,23 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
             }
           }}
           onKeyDown={handleKeyDown}
+          onCompositionStart={() => setIsComposing(true)}
+          onCompositionEnd={() => setIsComposing(false)}
           onFocus={() => setIsInputFocused(true)}
-          onBlur={() => setIsInputFocused(false)}
+          onBlur={() => {
+            setIsInputFocused(false)
+            setDismissedTagQuery(null)
+          }}
           placeholder={
             activeCommand
               ? t('search.searchIn', { name: t(activeCommand.labelKey) })
               : scopePillConfig
                 ? t('search.searchIn', { name: t(scopePillConfig.labelKey) })
-                : (placeholder ?? t('search.placeholder'))
+                : activeTag
+                  ? t('search.searchIn', { name: activeTag.name })
+                  : (placeholder ?? t('search.placeholder'))
           }
-          className={`flex-1 bg-transparent border-none outline-none py-4 text-lg text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-0 ${activeCommand || scopePillConfig ? 'px-3' : 'px-4'}`}
+          className={`min-w-0 flex-1 bg-transparent border-none outline-none py-4 text-lg text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-0 ${activeCommand || scopePillConfig || activeTag ? 'px-3' : 'px-4'}`}
         />
 
         {/* Right Actions */}
@@ -488,10 +600,63 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
         </div>
       </div>
 
+      {showTagMenu && (
+        <div className={cn(dropdownSurfaceClass, 'absolute inset-x-0 top-full mt-2 p-1.5')}>
+          <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+            {t('clipboard.tags')}
+          </div>
+          <div
+            id={suggestionsId}
+            role="listbox"
+            aria-label={t('clipboard.tags')}
+            aria-busy={tagsLoading}
+            className="max-h-60 overflow-y-auto"
+          >
+            {matchingTags.map((tag, index) => (
+              <button
+                key={tag.id}
+                id={`${suggestionsId}-${index}`}
+                type="button"
+                role="option"
+                tabIndex={-1}
+                aria-selected={index === activeTagIndex}
+                onMouseDown={event => event.preventDefault()}
+                onPointerMove={() => setSelectedFilterIndex(index)}
+                onClick={() => selectTag(tag)}
+                className={cn(
+                  suggestionItemClass,
+                  'w-full gap-2',
+                  index === activeTagIndex &&
+                    'bg-violet-500/10 text-violet-700 dark:bg-violet-500/15 dark:text-violet-200'
+                )}
+              >
+                <span
+                  aria-hidden="true"
+                  className="h-2 w-2 shrink-0 rounded-full bg-violet-400"
+                  style={tag.color ? { backgroundColor: tag.color } : undefined}
+                />
+                <span className="min-w-0 break-words">{tag.name}</span>
+              </button>
+            ))}
+          </div>
+          {!matchingTags.length && (
+            <p role="status" className="px-3 py-2 text-xs text-slate-500">
+              {t(
+                tagsLoading
+                  ? 'clipboard.loadingTags'
+                  : tagsLoadError
+                    ? 'clipboard.tagsLoadError'
+                    : 'clipboard.noMatchingTags'
+              )}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Slash-Command Filter Menu */}
       {showFilterMenu && (
         <div
-          id="search-command-listbox"
+          id={suggestionsId}
           role="listbox"
           className={cn(
             dropdownSurfaceClass,
@@ -507,7 +672,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
               return (
                 <button
                   key={option.prefix}
-                  id={`search-command-${index}`}
+                  id={`${suggestionsId}-${index}`}
                   role="option"
                   aria-selected={index === activeFilterIndex}
                   onClick={() => handleFilterClick(option)}

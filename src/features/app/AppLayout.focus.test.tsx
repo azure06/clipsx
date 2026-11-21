@@ -364,13 +364,15 @@ describe('AppLayout search focus ownership', () => {
     render(<AppLayout />)
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('Search clips or ask a question…')).toHaveFocus()
+      expect(
+        screen.getByPlaceholderText('Search clips or ask a question · @ for tags')
+      ).toHaveFocus()
     })
   })
 
   it('refocuses search input after an explicit host activation in clips view', async () => {
     render(<AppLayout />)
-    const input = screen.getByPlaceholderText('Search clips or ask a question…')
+    const input = screen.getByPlaceholderText('Search clips or ask a question · @ for tags')
 
     await waitFor(() => expect(input).toHaveFocus())
 
@@ -384,7 +386,7 @@ describe('AppLayout search focus ownership', () => {
 
   it('does not steal focus on another page after explicit host activation', async () => {
     render(<AppLayout />)
-    const input = screen.getByPlaceholderText('Search clips or ask a question…')
+    const input = screen.getByPlaceholderText('Search clips or ask a question · @ for tags')
 
     await waitFor(() => expect(input).toHaveFocus())
 

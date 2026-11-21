@@ -7,7 +7,17 @@ import { KEYWORD_DELAY_MS } from './progressive'
 
 type Props = Omit<
   ComponentPropsWithoutRef<typeof SearchBar>,
-  'value' | 'onChange' | 'onClear' | 'canRecall' | 'isUpdatingResults'
+  | 'value'
+  | 'onChange'
+  | 'onClear'
+  | 'canRecall'
+  | 'isUpdatingResults'
+  | 'tags'
+  | 'activeTag'
+  | 'onTagChange'
+  | 'onLoadTags'
+  | 'tagsLoading'
+  | 'tagsLoadError'
 >
 
 // Only this small subtree subscribes to the raw input. The history renders
@@ -16,6 +26,14 @@ export const SearchController = forwardRef<SearchBarHandle, Props>(
   function SearchController(props, ref) {
     const query = useUIStore(state => state.searchQuery)
     const setQuery = useUIStore(state => state.setSearchQuery)
+    const tags = useClipboardStore(state => state.availableTags)
+    const tagsLoading = useClipboardStore(state => state.tagsLoading)
+    const tagsLoadError = useClipboardStore(state => Boolean(state.tagsError))
+    const activeTag = useClipboardStore(state =>
+      state.availableTags.find(tag => tag.id === state.tagFilter)
+    )
+    const setTagFilter = useClipboardStore(state => state.setTagFilter)
+    const refreshTags = useClipboardStore(state => state.refreshAvailableTags)
     const isUpdatingResults = useClipboardStore(
       state => (state.resultsStale || state.semanticPending) && !state.error
     )
@@ -77,6 +95,12 @@ export const SearchController = forwardRef<SearchBarHandle, Props>(
           onClear={() => setQuery('')}
           canRecall={parseSearch(query).query.length > 0}
           isUpdatingResults={isUpdatingResults}
+          tags={tags}
+          activeTag={activeTag}
+          onTagChange={setTagFilter}
+          onLoadTags={refreshTags}
+          tagsLoading={tagsLoading}
+          tagsLoadError={tagsLoadError}
         />
       </div>
     )

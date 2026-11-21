@@ -787,6 +787,20 @@ describe('live tag catalogue', () => {
       request: { tagId: null, scope: 'favorites', limit: 50, cursor: null },
     })
   })
+  it('removes a deleted tag from cached clips and pinned shortcuts', async () => {
+    const tags = [workTag, automatic]
+    useClipboardStore.setState({
+      availableTags: tags,
+      clips: [makeClip({ tags })],
+      pinnedPreview: [makeClip({ id: 'pin', tags, isPinned: true })],
+    })
+    mockInvoke.mockResolvedValueOnce(undefined)
+    await useClipboardStore.getState().deleteAvailableTag(workTag.id)
+    const { availableTags, clips, pinnedPreview } = useClipboardStore.getState()
+    expect(availableTags).toEqual([automatic])
+    expect(clips[0]?.tags).toEqual([automatic])
+    expect(pinnedPreview[0]?.tags).toEqual([automatic])
+  })
   it('keeps catalogue failures separate from history errors and allows retry', async () => {
     mockInvoke.mockRejectedValueOnce(new Error('offline'))
     await useClipboardStore.getState().refreshAvailableTags()
