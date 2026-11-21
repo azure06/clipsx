@@ -132,12 +132,25 @@ describe('preview tags', () => {
     await user.type(screen.getByRole('combobox'), 'sea')
     await user.keyboard('{Enter}')
     expect(state.addClipTag).toHaveBeenCalledWith('clip', research)
-    await user.type(screen.getByRole('combobox'), 'new tag')
+    await user.type(screen.getByRole('combobox'), 'GitHub API')
     await user.keyboard('{Enter}')
-    expect(state.createTagAndAttach).toHaveBeenCalledWith('clip', 'new tag')
+    expect(state.createTagAndAttach).toHaveBeenCalledWith('clip', 'GitHub API')
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Add tag' })).toHaveFocus()
+  })
+  it('offers the existing tag when typing a different capitalization', async () => {
+    const existing = { id: 'ai', name: 'AI', color: null }
+    state.availableTags = [existing]
+    const user = userEvent.setup()
+    render(<TagChips clipId="clip" tags={[]} />)
+    await user.click(screen.getByRole('button', { name: 'Add tag' }))
+    await user.type(screen.getByRole('combobox'), 'ai')
+    expect(screen.getByRole('option', { name: 'AI' })).toBeVisible()
+    expect(screen.queryByRole('option', { name: /Create/ })).not.toBeInTheDocument()
+    await user.keyboard('{Enter}')
+    expect(state.addClipTag).toHaveBeenCalledWith('clip', existing)
+    expect(state.createTagAndAttach).not.toHaveBeenCalled()
   })
   it('does not submit during IME composition', async () => {
     const user = userEvent.setup()

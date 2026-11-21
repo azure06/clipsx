@@ -4,7 +4,10 @@ use crate::clipboard::capabilities;
 
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
-use sqlx::{sqlite::SqlitePoolOptions, AssertSqlSafe, QueryBuilder, Row, Sqlite, SqlitePool};
+use sqlx::{
+    sqlite::SqlitePoolOptions, AssertSqlSafe, QueryBuilder, Row, Sqlite, SqliteConnection,
+    SqlitePool,
+};
 use std::{
     collections::HashMap,
     fs,
@@ -1222,9 +1225,45 @@ impl HistoryRepository {
             .collect())
     }
     pub async fn create_tag(&self, name: String, color: Option<String>) -> Result<Tag> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let tag = Self::get_or_create_tag_in(&mut tx, &name, color).await?;
+        tx.commit().await?;
+        Ok(tag)
+    }
+    pub(crate) async fn find_tag_in(tx: &mut SqliteConnection, name: &str) -> Result<Option<Tag>> {
+        let exact = sqlx::query_as::<_, (String, String, Option<String>)>(
+            "SELECT id,name,color FROM catalog_tags WHERE name=?",
+        )
+        .bind(name)
+        .fetch_optional(&mut *tx)
+        .await?;
+        // Prefer exact spelling for existing case variants. Otherwise reuse the oldest.
+        let matched = if exact.is_some() {
+            exact
+        } else {
+            let normalized = name.to_lowercase();
+            sqlx::query_as::<_, (String, String, Option<String>)>(
+                "SELECT id,name,color FROM catalog_tags ORDER BY created_at,id",
+            )
+            .fetch_all(&mut *tx)
+            .await?
+            .into_iter()
+            .find(|(_, name, _)| name.to_lowercase() == normalized)
+        };
+        Ok(matched.map(|(id, name, color)| Tag { id, name, color }))
+    }
+    // The caller holds a write transaction so lookup and creation are serialized.
+    pub(crate) async fn get_or_create_tag_in(
+        tx: &mut SqliteConnection,
+        name: &str,
+        color: Option<String>,
+    ) -> Result<Tag> {
+        if let Some(tag) = Self::find_tag_in(tx, name).await? {
+            return Ok(tag);
+        }
         let tag = Tag {
             id: new_id(),
-            name,
+            name: name.into(),
             color,
         };
         let now = now_ms();
@@ -1236,7 +1275,7 @@ impl HistoryRepository {
         .bind(&tag.color)
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
         Ok(tag)
     }

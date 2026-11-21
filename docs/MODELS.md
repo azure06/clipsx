@@ -157,6 +157,11 @@ flowchart LR
 | `catalog_tags` | Canonical | Defines reusable tag identities and labels, created manually or by matching decision rules. | History repository on behalf of tag actions and capture decisions | User-owned catalog data. Deleting a tag removes memberships but does not delete clips; enabled decision rules can create it again on a later capture. |
 | `catalog_clip_tags` | Canonical | Joins clips to tags for organization, filtering, and search eligibility. | History repository on behalf of user membership actions | Relationship row owned by both referenced sides; cascades when either the clip or tag is deleted. |
 
+New tags preserve the entered capitalization. Tag creation and name-based
+actions resolve names case-insensitively. Existing tags that differ only by
+case keep their separate identities and memberships. Resolution prefers an
+exact spelling, then the oldest matching tag.
+
 ## 4. Content understanding
 
 ```mermaid

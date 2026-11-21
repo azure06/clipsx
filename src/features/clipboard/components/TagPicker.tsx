@@ -41,7 +41,8 @@ export function TagPicker({
   const loadError = useClipboardStore(state => state.tagsError)
   const refresh = useClipboardStore(state => state.refreshAvailableTags)
   const attaching = Boolean(onCreate)
-  const normalized = query.trim().toLowerCase()
+  const tagName = query.trim()
+  const normalized = tagName.toLowerCase()
   const matchingTags = tags.filter(tag => tag.name.toLowerCase().includes(normalized))
   const options: { tag: V2Tag | null; create?: boolean; label: string }[] = [
     ...(!attaching && !normalized ? [{ tag: null, label: t('clipboard.allTags') }] : []),
@@ -49,7 +50,7 @@ export function TagPicker({
       .filter(tag => !attaching || !selectedIds.includes(tag.id))
       .map(tag => ({ tag, label: tag.name })),
     ...(attaching && normalized && !tags.some(tag => tag.name.toLowerCase() === normalized)
-      ? [{ tag: null, create: true, label: t('clipboard.createTag', { name: query.trim() }) }]
+      ? [{ tag: null, create: true, label: t('clipboard.createTag', { name: tagName }) }]
       : []),
   ]
   const active = Math.min(activeIndex, Math.max(0, options.length - 1))
@@ -81,7 +82,7 @@ export function TagPicker({
   const choose = (index: number) => {
     const option = options[index]
     if (option)
-      void run(() => (option.create && onCreate ? onCreate(normalized) : onChoose(option.tag)), {
+      void run(() => (option.create && onCreate ? onCreate(tagName) : onChoose(option.tag)), {
         close: !attaching,
       })
   }
