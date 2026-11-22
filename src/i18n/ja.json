@@ -1965,6 +1965,79 @@
     "falseProbability": "いいえ（False）：{{probability}}",
     "probabilityHelp": "モデルが推定した回答の確率であり、正しさの指標ではありません。「はい」が50%以上で一致と判定します。「いいえ」は安全であることを意味しません。"
   },
+  "localAiSetup": {
+    "title": "ローカル AI を設定",
+    "viewSetup": "ローカル AI の設定を表示",
+    "description": "このコンピューターで Ollama を使う機能を選びます。",
+    "missing": "Ollama が見つかりませんでした。公式ページからインストールし、起動したままにしてください。ClipsX が再確認します。",
+    "stopped": "Ollama はインストール済みです。ClipsX が接続できるように起動してください。",
+    "installOllama": "Ollama をインストール",
+    "openOllama": "Ollama を開く",
+    "checkAgain": "再確認",
+    "step": "ステップ {{step}} / {{total}}",
+    "next": "次へ",
+    "back": "戻る",
+    "review": "設定内容を確認",
+    "reviewHelp": "選んだモデルをテストし、以下の機能で使えるようにします。",
+    "installed": "インストール済み",
+    "startingPoint": "最初に試す候補",
+    "downloadSize": "約 {{size}} のダウンロード",
+    "totalDownload": "ダウンロードの目安 · {{size}}",
+    "noDownloads": "ダウンロードは不要です",
+    "download": "ダウンロードして設定",
+    "apply": "テストして適用",
+    "background": "バックグラウンドで続ける",
+    "downloaded": "{{model}} を {{size}} ダウンロード済み",
+    "ready": "ローカル AI の設定が完了しました",
+    "openRecall": "Recall を開く",
+    "done": "完了",
+    "skip": "スキップ",
+    "skipHelp": "この機能の現在の設定を保持します。",
+    "keepCurrent": "現在の設定を保持",
+    "privacy": "プライバシーチェックにも使う",
+    "privacyHelp": "新しいテキストクリップが文脈に基づくプライバシールールに当てはまるか、このモデルで確認します。",
+    "privacyAssignment": "プライバシーチェック",
+    "selectedModel": "選んだモデル",
+    "roles": {
+      "chat": {
+        "title": "Recall チャット",
+        "description": "保存したクリップについて質問したり、要約したり、Recall のツールを使ったりできます。"
+      },
+      "embedding": {
+        "title": "意味検索",
+        "description": "言葉が違っても、意味が近いクリップを探せます。モデルを変えると、対象クリップの意味検索インデックスが再構築されます。"
+      },
+      "decision": {
+        "title": "判定ルール",
+        "description": "ルールに沿って、クリップへのタグ付け、お気に入り登録、ピン留めを自動化します。文脈に基づくプライバシーチェックにも使用できます。"
+      }
+    },
+    "models": {
+      "qwenSmall": "チャット候補では最も小さいダウンロードです。日常の質問に向いています。ツールを何度も使う処理は苦手な場合があります。",
+      "qwenBalanced": "公開されているツール呼び出しの評価では 2B より上です。より多くのメモリを使います。",
+      "lfm": "複数のツールを順に使うよう訓練されています。チャット候補では最もダウンロードが大きく、回答ごとに推論します。",
+      "gemma": "小型の多言語検索モデルです。入力は約 2,000 トークンまでで、短い文章に向いています。",
+      "qwenEmbedSmall": "小型の多言語モデルで、EmbeddingGemma より長い入力に対応します。4B モデルより規模が小さいです。",
+      "qwenEmbedLarge": "細かな意味の違いを捉えるための大型多言語モデルです。インデックス作成にはより多くの容量と計算が必要です。",
+      "tev": "判定候補では最も小さいダウンロードです。単純な「はい／いいえ」のルール向けの実験的なモデルです。",
+      "d1": "日本語にも対応する多言語モデルです。Tev1 よりダウンロードが大きくなります。",
+      "decider": "複数のルールをまとめて判定できる Perplexity の小型モデルです。判定候補では最もダウンロードが大きくなります。"
+    },
+    "stage": {
+      "checking": "Ollama を確認中…",
+      "waiting": "Ollama の起動を待っています…",
+      "downloading": "{{model}} をダウンロード中…",
+      "verifying": "{{model}} を確認中…",
+      "saving": "選択した設定を適用中…"
+    },
+    "failure": {
+      "checking": "Ollama を確認できませんでした。Ollama が起動しているか確認して、もう一度お試しください。",
+      "waiting": "Ollama を起動するか接続できませんでした。手動で起動して、再確認してください。",
+      "downloading": "{{model}} をダウンロードできませんでした。通信状況、空き容量、Ollama のバージョンを確認して、もう一度お試しください。",
+      "verifying": "{{model}} の設定確認に失敗しました。Ollama を最新版に更新して再試行するか、別のモデルを選んでください。",
+      "saving": "設定を適用できませんでした。もう一度お試しください。"
+    }
+  },
   "intelligenceOverview": {
     "pageDescription": "検索、プライバシー、モデル、接続済みアシスタント。",
     "title": "インテリジェンスの設定状況",

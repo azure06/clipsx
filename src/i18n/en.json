@@ -1965,6 +1965,79 @@
     "falseProbability": "No (False): {{probability}}",
     "probabilityHelp": "These are the model’s estimated probabilities for the answer, not a measure of correctness. Yes at 50% or above counts as a match. No does not mean the clip is safe."
   },
+  "localAiSetup": {
+    "title": "Set up local AI",
+    "viewSetup": "View local AI setup",
+    "description": "Choose what ClipsX should run on this computer with Ollama.",
+    "missing": "ClipsX couldn’t find Ollama. Open the official download page, install Ollama, then leave it running. ClipsX will check again.",
+    "stopped": "Ollama is installed. Open it so ClipsX can connect.",
+    "installOllama": "Install Ollama",
+    "openOllama": "Open Ollama",
+    "checkAgain": "Check again",
+    "step": "Step {{step}} of {{total}}",
+    "next": "Next",
+    "back": "Back",
+    "review": "Review setup",
+    "reviewHelp": "ClipsX will test your choices and make them active for the features below.",
+    "installed": "Already installed",
+    "startingPoint": "Starting point",
+    "downloadSize": "About {{size}} to download",
+    "totalDownload": "Estimated download · {{size}}",
+    "noDownloads": "No downloads needed",
+    "download": "Download and set up",
+    "apply": "Test and apply",
+    "background": "Continue in background",
+    "downloaded": "{{size}} downloaded for {{model}}",
+    "ready": "Local AI setup complete",
+    "openRecall": "Open Recall",
+    "done": "Done",
+    "skip": "Skip",
+    "skipHelp": "Keep your current setup for this feature.",
+    "keepCurrent": "Keep current setup",
+    "privacy": "Also use for privacy checks",
+    "privacyHelp": "Use this model to check new text clips against contextual privacy rules.",
+    "privacyAssignment": "Privacy checks",
+    "selectedModel": "The selected model",
+    "roles": {
+      "chat": {
+        "title": "Recall chat",
+        "description": "Answer questions about your saved clips, summarize them, and use Recall tools."
+      },
+      "embedding": {
+        "title": "Meaning Search",
+        "description": "Find clips by meaning even when the words differ. Changing this model rebuilds the meaning index for eligible clips."
+      },
+      "decision": {
+        "title": "Decision rules",
+        "description": "Check your rules for tagging, favoriting, or pinning clips automatically. You can also assign the model to contextual privacy checks."
+      }
+    },
+    "models": {
+      "qwenSmall": "Smallest chat download. Suits everyday questions. May struggle with longer chains of tool calls.",
+      "qwenBalanced": "Stronger published tool-calling scores than the 2B model. Uses more memory.",
+      "lfm": "Trained to chain tool calls. Largest chat download, with reasoning before every answer.",
+      "gemma": "Compact multilingual search model. Best suited to shorter passages with its 2K-token input window.",
+      "qwenEmbedSmall": "Small multilingual model with a longer input window than EmbeddingGemma. Has less capacity than the 4B model.",
+      "qwenEmbedLarge": "Larger multilingual search model for more nuanced matches. Takes more disk space and compute to index.",
+      "tev": "Smallest decision download. An experimental model for straightforward yes/no rules.",
+      "d1": "Multilingual model that supports Japanese. Larger download than Tev1.",
+      "decider": "Perplexity’s compact decision model for checking multiple rules at once. Largest download in this step."
+    },
+    "stage": {
+      "checking": "Checking for Ollama…",
+      "waiting": "Waiting for Ollama to start…",
+      "downloading": "Downloading {{model}}…",
+      "verifying": "Checking {{model}}…",
+      "saving": "Applying your choices…"
+    },
+    "failure": {
+      "checking": "ClipsX couldn’t check Ollama. Make sure it’s running and try again.",
+      "waiting": "ClipsX couldn’t open or connect to Ollama. Open it manually, then check again.",
+      "downloading": "Couldn’t download {{model}}. Check your connection, disk space, and Ollama version, then try again.",
+      "verifying": "The setup check failed for {{model}}. Make sure Ollama is up to date, then retry or pick another model.",
+      "saving": "ClipsX couldn’t apply your choices. Try again."
+    }
+  },
   "intelligenceOverview": {
     "pageDescription": "Search, privacy, models, and connected assistants.",
     "title": "Your intelligence setup",

@@ -261,6 +261,26 @@ Intelligence → Models is the common configuration workspace. Its active-model 
 
 Ollama decision presets use the [System One API](https://github.com/ollama/ollama/blob/main/docs/capabilities/decision.mdx). An explicit test sends a fixed synthetic classification input, validates the returned choice and probabilities, and never reads clipboard data. Confidence measures preference among labels rather than correctness. OpenRouter decision presets use its Decisions API; rerank execution remains reserved. Intelligence → Decision rules configures optional contextual privacy checks, pre-storage secret exclusion, and custom text rules. Privacy is evaluated before general rules (tags, favorites, and pins), indexing, or automatic extension disclosure. General rule actions only add metadata and never remove existing favorites or pins. Both decision assignments may reference the same preset. Selecting a privacy model enables checks on new captures and sends text to its configured provider, including hosted providers. A local Ollama endpoint is not proof of on-device execution because it can route cloud models. Checks never automatically fall back to another provider. Rule testing sends only the supplied sample and does not save it or apply actions. True means yes to the rule’s question; False means no. A yes probability of at least 50% matches the rule. These probabilities describe the model’s estimated answer, not its correctness; a non-match does not establish that a clip is safe.
 
+Intelligence → Overview offers **Set up local AI** as its primary action when
+Recall has no enabled default. The same dialog is available in Recall when no
+chat model is available.
+The guide checks the standard loopback Ollama endpoint and walks through Recall,
+Meaning Search, and decision rules. Each step presents three role-specific
+candidates and a Skip option that keeps the current assignment. When there is
+no enabled Recall preset, the starting selection depends on reported physical
+memory. Meaning Search and decision rules start skipped. Using a decision model
+for contextual privacy checks requires an explicit opt-in.
+
+The review shows the selected assignments and estimates download size based on
+the models already installed. The user authorizes downloads from this screen.
+They can continue while the user works in other views. If Ollama is missing,
+the guide can open its official download page and wait for it to start. ClipsX
+verifies each selected model with synthetic input before saving the assignments
+together. Meaning Search uses the normal embedding activation and reindexing
+path. Installed downloads are available for retry if any verification fails.
+Ollama decision setup, the Models decision test, and live decision rules share a
+30-second request budget that includes loading a cold model.
+
 Recall opens on demand and stays mounted after its first visit. History remains the startup page. Switching views keeps the current draft and answer running. The Recall sidebar button indicates a running answer and returns to its conversation, where Stop cancels it. History's Ask action and shortcut start one turn with the current query and filters when Recall is idle. If a turn is starting or running, they return to that conversation. Search input alone never starts generation. Saved conversations, source snapshots, and interrupted-run recovery follow the [data model](MODELS.md).
 
 ### Native SDK transport

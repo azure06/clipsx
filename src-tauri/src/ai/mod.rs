@@ -5,6 +5,7 @@ pub mod credentials;
 pub mod decision;
 pub mod embedding;
 pub mod http;
+pub mod local_setup;
 pub mod model_information;
 pub mod privacy;
 #[cfg(test)]

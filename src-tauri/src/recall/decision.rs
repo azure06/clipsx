@@ -2,7 +2,6 @@
 use super::{configuration, contracts::*};
 use crate::{history::HistoryRepository, providers::ollama::client::OllamaClient};
 use anyhow::{bail, Context, Result};
-use std::time::Duration;
 
 pub async fn test(repo: &HistoryRepository, preset_id: &str) -> Result<DecisionTestResult> {
     let document = configuration::export(repo).await?;
@@ -17,12 +16,16 @@ pub async fn test(repo: &HistoryRepository, preset_id: &str) -> Result<DecisionT
         .find(|c| c.id == preset.connection_id && c.enabled && c.provider == AiProviderKind::Ollama)
         .context("connection_disabled")?;
     let client = OllamaClient::new(&connection.base_url)?;
-    let value = client.post_bounded("v1/systemone", serde_json::json!({
-        "model": preset.model_id,
-        "state": "A meeting is scheduled for Tuesday at 10 AM.",
-        "questions": {"category": {"type":"choice", "instructions":"Classify this text.",
-            "criteria":{"schedule":"An appointment or meeting", "code":"Computer source code"}}}
-    }), Duration::from_secs(60), 64 * 1024).await?;
+    let value = crate::ai::decision::request_ollama(
+        &client,
+        serde_json::json!({
+            "model": preset.model_id,
+            "state": "A meeting is scheduled for Tuesday at 10 AM.",
+            "questions": {"category": {"type":"choice", "instructions":"Classify this text.",
+                "criteria":{"schedule":"An appointment or meeting", "code":"Computer source code"}}}
+        }),
+    )
+    .await?;
     parse_result(&value).map_err(|_| {
         crate::providers::error::ProviderError::InvalidOutput("invalid decision response".into())
             .into()

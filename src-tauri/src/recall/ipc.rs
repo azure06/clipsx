@@ -9,7 +9,7 @@ use crate::{
     providers::error::ProviderError,
 };
 use serde::Serialize;
-use tauri::{Emitter, State};
+use tauri::{ipc::Channel, Emitter, State};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -75,17 +75,58 @@ pub async fn ai_configuration_export(
         .await
         .map_err(public_failure)
 }
+
+#[tauri::command]
+pub async fn ai_local_setup_probe(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+) -> Result<crate::ai::local_setup::LocalStatus, OperationFailure> {
+    service(&webview, &state)?;
+    crate::ai::local_setup::probe(&state.history)
+        .await
+        .map_err(public_failure)
+}
+
+#[tauri::command]
+pub async fn ai_local_setup_open(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+) -> Result<(), OperationFailure> {
+    service(&webview, &state)?;
+    crate::ai::local_setup::open().map_err(public_failure)
+}
+
+#[tauri::command]
+pub async fn ai_local_setup_finish(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    plan: crate::ai::local_setup::LocalPlan,
+    downloads: Vec<String>,
+    progress: Channel<crate::providers::ollama::setup::Progress>,
+) -> Result<crate::ai::local_setup::LocalPlan, OperationFailure> {
+    service(&webview, &state)?;
+    let result = crate::ai::local_setup::finish(&state.history, plan, downloads, |event| {
+        let _ = progress.send(event);
+    })
+    .await
+    .map_err(public_failure)?;
+    notify_configuration_change(&app, &state, true);
+    Ok(result)
+}
 #[tauri::command]
 pub async fn ai_configuration_preview(
     webview: tauri::Webview,
     state: State<'_, AppState>,
     configuration: AiConfiguration,
+    include_assignments: bool,
 ) -> Result<AiConfiguration, OperationFailure> {
     service(&webview, &state)?;
     let current = super::configuration::export(&state.history)
         .await
         .map_err(public_failure)?;
-    super::configuration::merge(&current, configuration).map_err(public_failure)
+    super::configuration::merge_file(&current, configuration, include_assignments)
+        .map_err(public_failure)
 }
 
 #[tauri::command]
@@ -140,13 +181,35 @@ pub async fn ai_configuration_import(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
     configuration: AiConfiguration,
+    include_assignments: bool,
 ) -> Result<AiConfigurationState, OperationFailure> {
     service(&webview, &state)?;
-    let result = super::configuration::import(&state.history, configuration)
+    let result =
+        super::configuration::import_file(&state.history, configuration, include_assignments)
+            .await
+            .map_err(public_failure);
+    notify_configuration_change(&app, &state, result.is_ok());
+    result
+}
+
+#[tauri::command]
+pub async fn ai_configuration_edit(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    change: super::contracts::AiConfigurationEdit,
+) -> Result<AiConfigurationState, OperationFailure> {
+    service(&webview, &state)?;
+    let result = super::configuration::edit(&state.history, change)
         .await
         .map_err(public_failure);
-    crate::app::workers::wake_text_index(&app, state.history.clone());
-    if result.is_ok() {
+    notify_configuration_change(&app, &state, result.is_ok());
+    result
+}
+
+fn notify_configuration_change(app: &tauri::AppHandle, state: &AppState, saved: bool) {
+    crate::app::workers::wake_text_index(app, state.history.clone());
+    if saved {
         let _ = app.emit("generation-provider-status-changed", ());
         let _ = app.emit("ai-configuration-changed", ());
         state.workers.extensions.wake_extensions(
@@ -155,7 +218,6 @@ pub async fn ai_configuration_import(
             state.extensions.clone(),
         );
     }
-    result
 }
 #[tauri::command]
 pub async fn ai_set_credential(
@@ -169,13 +231,7 @@ pub async fn ai_set_credential(
     super::configuration::set_credential(&state.history, &connection_id, value)
         .await
         .map_err(public_failure)?;
-    let _ = app.emit("generation-provider-status-changed", ());
-    let _ = app.emit("ai-configuration-changed", ());
-    crate::app::workers::wake_text_index(&app, state.history.clone());
-    state
-        .workers
-        .extensions
-        .wake_extensions(app, state.history.clone(), state.extensions.clone());
+    notify_configuration_change(&app, &state, true);
     Ok(())
 }
 
@@ -191,14 +247,7 @@ pub async fn ai_configuration_remove(
     let result = super::configuration::remove(&state.history, connection_id, preset_id)
         .await
         .map_err(public_failure);
-    crate::app::workers::wake_text_index(&app, state.history.clone());
-    let _ = app.emit("ai-configuration-changed", ());
-    let _ = app.emit("generation-provider-status-changed", ());
-    state.workers.extensions.wake_extensions(
-        app.clone(),
-        state.history.clone(),
-        state.extensions.clone(),
-    );
+    notify_configuration_change(&app, &state, true);
     result
 }
 

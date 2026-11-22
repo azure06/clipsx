@@ -1,11 +1,16 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { AiConfigurationsPanel } from './AiConfigurationsPanel'
 import { emptyConnection, emptyPreset } from './modelConfiguration'
-import type { AiConfiguration, AiConfigurationState } from '../recall/contracts.generated'
+import type {
+  AiConfiguration,
+  AiConfigurationEdit,
+  AiConfigurationState,
+} from '../recall/contracts.generated'
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
+  listen: vi.fn(),
   open: vi.fn(),
   save: vi.fn(),
   read: vi.fn(),
@@ -13,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   write: vi.fn(),
 }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
+vi.mock('@tauri-apps/api/event', () => ({ listen: mocks.listen }))
 vi.mock('../../shared/contexts/ToastContext', () => ({ useToast: () => ({ toast: vi.fn() }) }))
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: mocks.open, save: mocks.save }))
 vi.mock('@tauri-apps/plugin-fs', () => ({
@@ -45,6 +51,39 @@ it('assigns one decision preset independently to privacy and general use', async
   expect(state.configuration.selections.privacyDecision).toBe(preset.id)
   expect(state.configuration.selections.defaultDecision).toBe(preset.id)
   expect(state.configuration.version).toBe(4)
+})
+
+it('preserves a background setup assignment when saving from an older view and refreshes on change', async () => {
+  const user = userEvent.setup()
+  const connection = { ...emptyConnection(), name: 'Ollama' }
+  const decision = {
+    ...emptyPreset(connection.id),
+    purpose: 'decision' as const,
+    name: 'Local decision',
+  }
+  state.configuration.connections = [connection]
+  state.configuration.presets = [decision]
+  render(<AiConfigurationsPanel />)
+  await user.click(await screen.findByRole('button', { name: 'Edit' }))
+  state.configuration.selections.privacyDecision = decision.id
+  await user.click(screen.getByRole('combobox', { name: 'General decisions' }))
+  await user.click(screen.getByRole('option', { name: 'Ollama / Local decision' }))
+  expect(mocks.invoke).toHaveBeenCalledWith('ai_configuration_edit', {
+    change: { kind: 'assignment', role: 'defaultDecision', id: decision.id },
+  })
+  await waitFor(() =>
+    expect(screen.getByRole('combobox', { name: 'Privacy checks' })).toHaveTextContent(
+      'Local decision'
+    )
+  )
+  expect(state.configuration.selections.privacyDecision).toBe(decision.id)
+
+  state.configuration.selections.privacyDecision = null
+  const changeListener = mocks.listen.mock.calls[0]?.[1] as () => void
+  act(changeListener)
+  await waitFor(() =>
+    expect(screen.getByRole('combobox', { name: 'Privacy checks' })).toHaveTextContent('None')
+  )
 })
 
 it('previews affected defaults inline, cancels with Escape, and removes a model explicitly', async () => {
@@ -141,6 +180,7 @@ it('removes a provider and shows retryable credential cleanup without losing the
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mocks.listen.mockResolvedValue(vi.fn())
   state = {
     configuration: {
       version: 2,
@@ -159,10 +199,32 @@ beforeEach(() => {
   }
   mocks.invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
     if (command === 'ai_configuration_state') return Promise.resolve(structuredClone(state))
+    if (command === 'ai_configuration_edit') {
+      const change = args?.['change'] as AiConfigurationEdit
+      const configuration = state.configuration
+      if (change.kind === 'connection') {
+        configuration.connections = [
+          ...configuration.connections.filter(c => c.id !== change.connection.id),
+          change.connection,
+        ]
+      } else if (change.kind === 'preset') {
+        configuration.presets = [
+          ...configuration.presets.filter(p => p.id !== change.preset.id),
+          change.preset,
+        ]
+      } else {
+        configuration.selections[change.role] = change.id
+      }
+      configuration.version = 4
+      return Promise.resolve(structuredClone(state))
+    }
     if (command === 'ai_configuration_import' || command === 'ai_configuration_preview') {
       const incoming = args?.['configuration'] as AiConfiguration
       const configuration = {
         ...incoming,
+        selections: args?.['includeAssignments']
+          ? incoming.selections
+          : state.configuration.selections,
         connections: [
           ...state.configuration.connections.filter(
             c => !incoming.connections.some(v => v.id === c.id)
@@ -213,7 +275,7 @@ it('uses focused editors, preserves several same-provider connections, and keeps
     expect.objectContaining({ value: 'private-fixture-key' })
   )
   expect(
-    JSON.stringify(mocks.invoke.mock.calls.filter(call => call[0] === 'ai_configuration_import'))
+    JSON.stringify(mocks.invoke.mock.calls.filter(call => call[0] === 'ai_configuration_edit'))
   ).not.toContain('private-fixture-key')
   await user.click(screen.getByRole('button', { name: /All configurations/ }))
   await user.click(screen.getAllByRole('button', { name: 'Add provider' })[0]!)
@@ -246,7 +308,7 @@ it('offers the guide on the overview and tests drafts without saving them', asyn
   })
   expect(
     mocks.invoke.mock.calls.some(
-      ([command]) => command === 'ai_configuration_import' || command === 'ai_set_credential'
+      ([command]) => command === 'ai_configuration_edit' || command === 'ai_set_credential'
     )
   ).toBe(false)
   await user.type(screen.getByLabelText('API base URL'), '/changed')
@@ -386,7 +448,7 @@ it('explains hosted indexing consent when activation fails and preserves the sel
   state.configuration.presets = [embedding]
   const invoke = mocks.invoke.getMockImplementation()!
   mocks.invoke.mockImplementation((command, args) =>
-    command === 'ai_configuration_import'
+    command === 'ai_configuration_edit'
       ? Promise.reject(
           Object.assign(new Error('Hosted indexing disabled'), {
             code: 'hosted_indexing_disabled',
@@ -408,9 +470,8 @@ it('explains hosted indexing consent when activation fails and preserves the sel
 it('previews file imports before applying and preserves feature assignments by default', async () => {
   const user = userEvent.setup()
   const connection = { ...emptyConnection(), name: 'Imported Ollama' }
-  mocks.read.mockResolvedValue(
-    JSON.stringify({ ...state.configuration, connections: [connection] })
-  )
+  const file = { ...state.configuration, connections: [connection] }
+  mocks.read.mockResolvedValue(JSON.stringify(file))
   render(<AiConfigurationsPanel />)
   await user.click(await screen.findByRole('button', { name: 'Import' }))
   await user.click(screen.getByRole('button', { name: 'Choose JSON file' }))
@@ -422,6 +483,10 @@ it('previews file imports before applying and preserves feature assignments by d
   await user.click(screen.getByRole('button', { name: 'Import configuration' }))
   await screen.findByText('Model configuration imported.')
   expect(state.configuration.connections[0]?.name).toBe('Imported Ollama')
+  expect(mocks.invoke).toHaveBeenCalledWith('ai_configuration_import', {
+    configuration: file,
+    includeAssignments: false,
+  })
 })
 
 it('rejects invalid and oversized JSON without importing', async () => {

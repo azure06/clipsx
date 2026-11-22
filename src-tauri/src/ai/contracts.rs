@@ -91,6 +91,33 @@ pub struct AiSelections {
     pub active_rerank: Option<String>,
 }
 dto!(AiConfiguration { version: u32, connections: Vec<AiConnection>, presets: Vec<AiModelPreset>, selections: AiSelections });
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum AiAssignment {
+    DefaultChat,
+    ActiveEmbedding,
+    WebSearch,
+    ExtensionGeneration,
+    DefaultDecision,
+    PrivacyDecision,
+    ActiveRerank,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum AiConfigurationEdit {
+    Connection {
+        connection: AiConnection,
+    },
+    Preset {
+        preset: AiModelPreset,
+    },
+    Assignment {
+        role: AiAssignment,
+        id: Option<String>,
+    },
+}
+
 dto!(AiConnectionState { connection_id: String, credential_configured: bool, last_test_at: Option<f64>, diagnostic: Option<String> });
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

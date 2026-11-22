@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useTranslation } from 'react-i18next'
 import {
@@ -11,6 +11,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { Button } from '../../shared/components/ui'
+import { useLocalAiSetup } from './localAiSetup'
 import type { TextEmbeddingStatus } from '../../shared/types/v2'
 import type {
   AiConfigurationState,
@@ -35,17 +36,23 @@ const muted = 'text-xs leading-5 text-slate-500 dark:text-slate-400'
 
 export function IntelligenceOverview({ status, loading, ocr, onNavigate }: Props) {
   const { t } = useTranslation()
+  const showSetup = useLocalAiSetup(state => state.show)
+  const setupResult = useLocalAiSetup(state => state.result)
+  const settingUp = useLocalAiSetup(state => Boolean(state.stage || state.result))
   const [configuration, setConfiguration] = useState<AiConfigurationState | null>(null)
   const [privacy, setPrivacy] = useState<PrivacySettings | null>(null)
   const [pending, setPending] = useState(true)
   const [failed, setFailed] = useState(false)
+  const refreshVersion = useRef(0)
   const refresh = useCallback(async () => {
+    const version = ++refreshVersion.current
     setPending(true)
     setFailed(false)
     const results = await Promise.allSettled([
       invoke<AiConfigurationState>('ai_configuration_state'),
       invoke<PrivacySettings>('privacy_settings'),
     ])
+    if (version !== refreshVersion.current) return
     if (results[0].status === 'fulfilled' && results[0].value) setConfiguration(results[0].value)
     if (results[1].status === 'fulfilled' && results[1].value) setPrivacy(results[1].value)
     setFailed(results.some(result => result.status === 'rejected' || !result.value))
@@ -53,7 +60,17 @@ export function IntelligenceOverview({ status, loading, ocr, onNavigate }: Props
   }, [])
   useEffect(() => {
     void refresh()
-  }, [refresh])
+  }, [refresh, setupResult])
+  const config = configuration?.configuration
+  const hasRecall = config?.presets.some(
+    preset =>
+      preset.id === config.selections.defaultChat &&
+      preset.purpose === 'chat' &&
+      config.connections.some(
+        connection => connection.id === preset.connectionId && connection.enabled
+      )
+  )
+  const prioritizeSetup = settingUp || (config && !hasRecall)
   const assignment = (key: keyof AiSelections) =>
     configuration?.configuration.presets.find(
       preset => preset.id === configuration.configuration.selections[key]
@@ -156,8 +173,19 @@ export function IntelligenceOverview({ status, loading, ocr, onNavigate }: Props
           </h2>
           <p className={`mt-2 max-w-xl ${muted}`}>{t('intelligenceOverview.description')}</p>
           <div className="mt-4 flex flex-wrap gap-2">
+            {(config || settingUp) && (
+              <Button
+                size="sm"
+                variant={prioritizeSetup ? 'primary' : 'outline'}
+                onClick={showSetup}
+                leftIcon={<Sparkles aria-hidden="true" className="h-3.5 w-3.5" />}
+              >
+                {t(settingUp ? 'localAiSetup.viewSetup' : 'localAiSetup.title')}
+              </Button>
+            )}
             <Button
               size="sm"
+              variant={prioritizeSetup ? 'outline' : 'primary'}
               onClick={() => onNavigate('models')}
               rightIcon={<ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />}
             >
