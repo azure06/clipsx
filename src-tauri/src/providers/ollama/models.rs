@@ -7,15 +7,16 @@ use futures::{stream, StreamExt};
 use std::time::Duration;
 
 const MAX_MODELS: usize = 128;
-const INSPECTION_CONCURRENCY: usize = 4;
+pub(super) const INSPECTION_CONCURRENCY: usize = 4;
 const MAX_CATALOG_BYTES: usize = 2 * 1024 * 1024;
 const MAX_MODEL_DETAILS_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone)]
-struct ListedModel {
-    id: String,
+pub(super) struct ListedModel {
+    pub(super) id: String,
     digest: Option<String>,
     size: Option<u64>,
+    pub(super) remote: bool,
 }
 
 pub async fn discover_models(endpoint: &str) -> ProviderResult<Vec<ModelDescriptor>> {
@@ -53,7 +54,7 @@ pub async fn inspect_model(endpoint: &str, model: &str) -> ProviderResult<ModelD
     Ok(descriptor)
 }
 
-async fn list_models(client: &OllamaClient) -> ProviderResult<Vec<ListedModel>> {
+pub(super) async fn list_models(client: &OllamaClient) -> ProviderResult<Vec<ListedModel>> {
     let response = client
         .get_bounded("api/tags", Duration::from_secs(10), MAX_CATALOG_BYTES)
         .await?;
@@ -76,12 +77,19 @@ async fn list_models(client: &OllamaClient) -> ProviderResult<Vec<ListedModel>> 
                 id,
                 digest: model["digest"].as_str().map(str::to_owned),
                 size: model["size"].as_u64(),
+                remote: is_remote_model(model),
             })
         })
         .collect::<Vec<_>>();
     listed.sort_by(|left, right| left.id.cmp(&right.id));
     listed.dedup_by(|left, right| left.id == right.id);
     Ok(listed)
+}
+
+pub(crate) fn is_remote_model(value: &serde_json::Value) -> bool {
+    ["remote_host", "remote_model"]
+        .iter()
+        .any(|key| value[*key].as_str().is_some_and(|field| !field.is_empty()))
 }
 
 /// Resolve a mutable tag's current immutable revision without an embedding probe.
@@ -128,7 +136,7 @@ async fn inspect_listed_model(client: &OllamaClient, listed: ListedModel) -> Mod
     }
 }
 
-fn parse_capabilities(value: &serde_json::Value) -> Vec<ModelCapability> {
+pub(super) fn parse_capabilities(value: &serde_json::Value) -> Vec<ModelCapability> {
     let mut capabilities = Vec::new();
     for capability in value["capabilities"]
         .as_array()

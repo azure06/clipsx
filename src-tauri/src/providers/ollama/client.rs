@@ -15,6 +15,7 @@ impl OllamaClient {
         let endpoint = validate_endpoint(endpoint)?;
         let client = Client::builder()
             .redirect(Policy::none())
+            .no_proxy()
             .build()
             .map_err(transport_error)?;
         Ok(Self { endpoint, client })

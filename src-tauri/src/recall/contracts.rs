@@ -349,6 +349,8 @@ mod tests {
             AiPresetOptions::decl(&config),
             AiModelPreset::decl(&config),
             AiSelections::decl(&config),
+            AiAssignment::decl(&config),
+            AiConfigurationEdit::decl(&config),
             DecisionTestResult::decl(&config),
             crate::ai::privacy::PrivacySettings::decl(&config),
             crate::ai::privacy::DecisionRule::decl(&config),

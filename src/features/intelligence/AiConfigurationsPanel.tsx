@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowRight,
@@ -23,7 +24,7 @@ import {
 import { Button, Select } from '../../shared/components/ui'
 import { DocumentationLink } from '../../shared/components/DocumentationLink'
 import type {
-  AiConfiguration,
+  AiConfigurationEdit,
   AiConfigurationState,
   AiConnection,
   AiDiscoveredModel,
@@ -61,6 +62,7 @@ export function AiConfigurationsPanel() {
   const removalTrigger = useRef<HTMLButtonElement | null>(null)
   const panel = useRef<HTMLDivElement>(null)
   const focusAfterRemoval = useRef<'provider' | 'model' | null>(null)
+  const refreshQueue = useRef(Promise.resolve())
   useEffect(() => {
     if (!removal && focusAfterRemoval.current) {
       panel.current
@@ -69,24 +71,21 @@ export function AiConfigurationsPanel() {
       focusAfterRemoval.current = null
     }
   }, [removal])
-  const refresh = useCallback(async () => {
-    const next = await invoke<AiConfigurationState>('ai_configuration_state')
-    setState(next)
-    return next
+  const refresh = useCallback(() => {
+    const request = refreshQueue.current.then(async () => {
+      setState(await invoke<AiConfigurationState>('ai_configuration_state'))
+    })
+    refreshQueue.current = request.catch(() => undefined)
+    return request
   }, [])
   useEffect(() => {
-    let mounted = true
-    void invoke<AiConfigurationState>('ai_configuration_state')
-      .then(next => {
-        if (mounted) setState(next)
-      })
-      .catch(() => {
-        if (mounted) setError(t('aiConfig.error'))
-      })
+    const load = () => void refresh().catch(() => setError(t('aiConfig.error')))
+    const listener = listen('ai-configuration-changed', load)
+    void listener.then(load, load)
     return () => {
-      mounted = false
+      void listener.then(unlisten => unlisten()).catch(() => undefined)
     }
-  }, [t])
+  }, [refresh, t])
   const perform = async (operation: () => Promise<unknown>) => {
     if (busyRef.current) return false
     busyRef.current = true
@@ -107,8 +106,8 @@ export function AiConfigurationsPanel() {
       setBusy(false)
     }
   }
-  const apply = (configuration: AiConfiguration) =>
-    invoke<AiConfigurationState>('ai_configuration_import', { configuration })
+  const apply = (change: AiConfigurationEdit) =>
+    invoke<AiConfigurationState>('ai_configuration_edit', { change })
   const current = state?.configuration
   if (!current)
     return (
@@ -351,12 +350,9 @@ export function AiConfigurationsPanel() {
                           onChange={id =>
                             void perform(() =>
                               apply({
-                                ...current,
-                                version: 4,
-                                selections: {
-                                  ...current.selections,
-                                  [key]: id === 'none' ? null : id,
-                                },
+                                kind: 'assignment',
+                                role: key,
+                                id: id === 'none' ? null : id,
                               })
                             )
                           }
@@ -557,11 +553,7 @@ export function AiConfigurationsPanel() {
               onSave={async (item, credential) => {
                 if (
                   await perform(async () => {
-                    await apply({
-                      ...current,
-                      version: 4,
-                      connections: [...current.connections.filter(c => c.id !== item.id), item],
-                    })
+                    await apply({ kind: 'connection', connection: item })
                     if (credential)
                       await invoke('ai_set_credential', {
                         connectionId: item.id,
@@ -616,15 +608,7 @@ export function AiConfigurationsPanel() {
                 }).then(() => undefined)
               }
               onSave={async preset => {
-                if (
-                  await perform(() =>
-                    apply({
-                      ...current,
-                      version: 4,
-                      presets: [...current.presets.filter(p => p.id !== preset.id), preset],
-                    })
-                  )
-                ) {
+                if (await perform(() => apply({ kind: 'preset', preset }))) {
                   setModelEditor(null)
                   setFeedback(t('modelsWorkspace.saved'))
                 }

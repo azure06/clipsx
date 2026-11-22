@@ -3,6 +3,7 @@
 pub mod client;
 pub mod generation;
 pub mod models;
+pub(crate) mod setup;
 pub mod text_embedding;
 
 pub use generation::OllamaGenerationProvider;

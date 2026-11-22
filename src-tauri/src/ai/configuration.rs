@@ -5,7 +5,7 @@ use super::embedding::verify_embedding;
 use super::{contracts::*, credentials};
 use crate::{
     history::{new_id, now_ms, HistoryRepository},
-    providers::{self, contracts::text_embedding::TextEmbeddingSpace},
+    providers::{self, contracts::text_embedding::TextEmbeddingSpace, ollama::setup},
 };
 use anyhow::{bail, Context, Result};
 use sqlx::{Row, SqliteConnection};
@@ -569,22 +569,203 @@ pub async fn import(
     repo: &HistoryRepository,
     incoming: AiConfiguration,
 ) -> Result<AiConfigurationState> {
+    import_file(repo, incoming, true).await
+}
+
+pub async fn import_file(
+    repo: &HistoryRepository,
+    incoming: AiConfiguration,
+    include_assignments: bool,
+) -> Result<AiConfigurationState> {
+    update_configuration(repo, false, |current| {
+        merge_file(current, incoming, include_assignments)
+    })
+    .await
+}
+
+pub fn merge_file(
+    current: &AiConfiguration,
+    incoming: AiConfiguration,
+    include_assignments: bool,
+) -> Result<AiConfiguration> {
+    let mut next = merge(current, incoming)?;
+    if !include_assignments {
+        next.selections = current.selections.clone();
+        validate(&next)?;
+    }
+    Ok(next)
+}
+
+pub async fn edit(
+    repo: &HistoryRepository,
+    change: AiConfigurationEdit,
+) -> Result<AiConfigurationState> {
+    let verify_embedding = matches!(
+        change,
+        AiConfigurationEdit::Assignment {
+            role: AiAssignment::ActiveEmbedding,
+            id: Some(_)
+        }
+    );
+    update_configuration(repo, verify_embedding, |current| {
+        let mut incoming = AiConfiguration {
+            version: current.version,
+            connections: Vec::new(),
+            presets: Vec::new(),
+            selections: current.selections.clone(),
+        };
+        match change {
+            AiConfigurationEdit::Connection { connection } => incoming.connections.push(connection),
+            AiConfigurationEdit::Preset { preset } => incoming.presets.push(preset),
+            AiConfigurationEdit::Assignment { role, id } => incoming.selections.assign(role, id),
+        }
+        merge(current, incoming)
+    })
+    .await
+}
+
+impl AiSelections {
+    fn assign(&mut self, role: AiAssignment, id: Option<String>) {
+        *match role {
+            AiAssignment::DefaultChat => &mut self.default_chat,
+            AiAssignment::ActiveEmbedding => &mut self.active_embedding,
+            AiAssignment::WebSearch => &mut self.web_search,
+            AiAssignment::ExtensionGeneration => &mut self.extension_generation,
+            AiAssignment::DefaultDecision => &mut self.default_decision,
+            AiAssignment::PrivacyDecision => &mut self.privacy_decision,
+            AiAssignment::ActiveRerank => &mut self.active_rerank,
+        } = id;
+    }
+}
+
+async fn update_configuration(
+    repo: &HistoryRepository,
+    verify_embedding: bool,
+    update: impl FnOnce(&AiConfiguration) -> Result<AiConfiguration>,
+) -> Result<AiConfigurationState> {
     let _guard = EMBEDDING_ACTIVATION_GATE.lock().await;
     cleanup_credentials_locked(repo).await?;
-    for connection in &incoming.connections {
-        let pending: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM ai_credential_cleanup WHERE connection_id=?)",
-        )
-        .bind(&connection.id)
-        .fetch_one(&repo.pool)
-        .await?;
-        if pending {
-            bail!(crate::failure::FailureCode::CredentialStorageUnavailable.failure());
+    let current = export(repo).await?;
+    let next = update(&current)?;
+    let pending: Vec<String> =
+        sqlx::query_scalar("SELECT connection_id FROM ai_credential_cleanup")
+            .fetch_all(&repo.pool)
+            .await?;
+    if next
+        .connections
+        .iter()
+        .any(|connection| pending.contains(&connection.id))
+    {
+        bail!(crate::failure::FailureCode::CredentialStorageUnavailable.failure());
+    }
+    save_configuration(repo, current, next, verify_embedding, || {}).await
+}
+
+pub(crate) async fn save_local_models(
+    repo: &HistoryRepository,
+    endpoint: &str,
+    models: Vec<(setup::Candidate, AiCapabilities)>,
+    privacy: bool,
+    progress: &(impl Fn(setup::Progress) + Sync),
+) -> Result<()> {
+    let _guard = EMBEDDING_ACTIVATION_GATE.lock().await;
+    let current = export(repo).await?;
+    let mut next = current.clone();
+    let endpoint = endpoint.trim_end_matches('/');
+    let connection_id = next
+        .connections
+        .iter()
+        .find(|c| {
+            c.enabled
+                && c.provider == AiProviderKind::Ollama
+                && c.base_url.trim_end_matches('/') == endpoint
+        })
+        .map(|connection| connection.id.clone())
+        .unwrap_or_else(|| {
+            let id = new_id();
+            next.connections.push(AiConnection {
+                id: id.clone(),
+                name: "Ollama".into(),
+                provider: AiProviderKind::Ollama,
+                base_url: endpoint.into(),
+                enabled: true,
+                options: AiConnectionOptions {
+                    organization: None,
+                    project: None,
+                },
+            });
+            id
+        });
+    let mut embedding_model = None;
+    for (model, capabilities) in models {
+        let preset_id = next
+            .presets
+            .iter()
+            .find(|p| {
+                p.connection_id == connection_id
+                    && p.model_id == model.id
+                    && p.purpose == model.purpose
+            })
+            .map(|preset| preset.id.clone())
+            .unwrap_or_else(|| {
+                let id = new_id();
+                let mut options = default_options();
+                match model.purpose {
+                    AiModelPurpose::Chat => options.limit_policy = Some(AiLimitPolicy::Auto),
+                    AiModelPurpose::Embedding => {
+                        options.embedding = Some(EmbeddingPresetOptions {
+                            dimensions: None,
+                            task_policy: "symmetric".into(),
+                            hosted_indexing_enabled: false,
+                        });
+                    }
+                    _ => {}
+                }
+                next.presets.push(AiModelPreset {
+                    id: id.clone(),
+                    name: model.id.into(),
+                    connection_id: connection_id.clone(),
+                    model_id: model.id.into(),
+                    purpose: model.purpose,
+                    context_limit: 8192,
+                    output_limit: 1024,
+                    options,
+                    capabilities,
+                });
+                id
+            });
+        match model.purpose {
+            AiModelPurpose::Chat => next.selections.default_chat = Some(preset_id),
+            AiModelPurpose::Embedding => {
+                embedding_model = Some(model.id);
+                next.selections.active_embedding = Some(preset_id);
+            }
+            AiModelPurpose::Decision => {
+                if privacy {
+                    next.selections.privacy_decision = Some(preset_id.clone());
+                }
+                next.selections.default_decision = Some(preset_id);
+            }
+            AiModelPurpose::Rerank => bail!("unsupported_setup_model"),
         }
     }
-    let current = export(repo).await?;
-    let merged = merge(&current, incoming)?;
-    import_merged(repo, current, merged).await
+    validate(&next)?;
+    if let Some(model) = embedding_model {
+        progress(setup::Progress {
+            stage: setup::Stage::Verifying,
+            downloaded_bytes: 0,
+            model: Some(model),
+        });
+    }
+    save_configuration(repo, current, next, embedding_model.is_some(), || {
+        progress(setup::Progress {
+            stage: setup::Stage::Saving,
+            downloaded_bytes: 0,
+            model: None,
+        });
+    })
+    .await?;
+    Ok(())
 }
 
 pub fn merge(current: &AiConfiguration, incoming: AiConfiguration) -> Result<AiConfiguration> {
@@ -654,46 +835,40 @@ pub fn merge(current: &AiConfiguration, incoming: AiConfiguration) -> Result<AiC
     Ok(merged)
 }
 
-async fn import_merged(
+async fn save_configuration(
     repo: &HistoryRepository,
     current: AiConfiguration,
     merged: AiConfiguration,
+    verify_selected_embedding: bool,
+    on_saving: impl FnOnce(),
 ) -> Result<AiConfigurationState> {
-    let changed = serde_json::to_string(&current.selections.active_embedding)?
-        != serde_json::to_string(&merged.selections.active_embedding)?
-        || current
-            .presets
-            .iter()
-            .filter(|p| Some(&p.id) == current.selections.active_embedding.as_ref())
-            .map(|v| serde_json::to_string(v).expect("serializable configuration"))
-            .collect::<Vec<_>>()
-            != merged
-                .presets
+    let embedding_assignment = |doc: &AiConfiguration| {
+        let id = doc.selections.active_embedding.as_ref();
+        let preset = id.and_then(|id| doc.presets.iter().find(|preset| &preset.id == id));
+        let connection = preset.and_then(|preset| {
+            doc.connections
                 .iter()
-                .filter(|p| Some(&p.id) == merged.selections.active_embedding.as_ref())
-                .map(|v| serde_json::to_string(v).expect("serializable configuration"))
-                .collect::<Vec<_>>();
-    let active_connection = |doc: &AiConfiguration| {
-        doc.selections
-            .active_embedding
-            .as_ref()
-            .and_then(|id| doc.presets.iter().find(|v| &v.id == id))
-            .and_then(|preset| {
-                doc.connections
-                    .iter()
-                    .find(|v| v.id == preset.connection_id)
-            })
-            .map(|v| serde_json::to_string(v).expect("serializable configuration"))
+                .find(|connection| connection.id == preset.connection_id)
+        });
+        serde_json::to_value((id, preset, connection))
     };
-    let changed = changed || active_connection(&current) != active_connection(&merged);
-    let validated = if changed {
-        match &merged.selections.active_embedding {
-            Some(id) => Some(verify_embedding(repo, &merged, id).await?),
-            None => None,
-        }
+    let activation = if verify_selected_embedding
+        || embedding_assignment(&current)? != embedding_assignment(&merged)?
+    {
+        Some(match &merged.selections.active_embedding {
+            Some(id) => {
+                let (config, space) = verify_embedding(repo, &merged, id).await?;
+                EmbeddingActivation::Enable {
+                    config,
+                    space: Box::new(space),
+                }
+            }
+            None => EmbeddingActivation::Disable,
+        })
     } else {
         None
     };
+    on_saving();
     let mut tx = repo.pool.begin_with("BEGIN IMMEDIATE").await?;
     if serde_json::to_string(&read_in(&mut tx).await?)? != serde_json::to_string(&current)? {
         bail!("configuration_changed");
@@ -730,14 +905,7 @@ async fn import_merged(
             .execute(&mut *tx)
             .await?;
     }
-    if changed {
-        let intent = match validated {
-            Some((config, space)) => EmbeddingActivation::Enable {
-                config,
-                space: Box::new(space),
-            },
-            None => EmbeddingActivation::Disable,
-        };
+    if let Some(intent) = activation {
         sqlx::query("INSERT INTO ai_embedding_activation(singleton,intent_json,updated_at) VALUES(1,?,?) ON CONFLICT(singleton) DO UPDATE SET intent_json=excluded.intent_json,updated_at=excluded.updated_at")
             .bind(serde_json::to_string(&intent)?)
             .bind(now_ms())
@@ -823,7 +991,7 @@ pub async fn remove(
         next.selections.web_search = None;
     }
     validate(&next)?;
-    import_merged(repo, current, next).await
+    save_configuration(repo, current, next, false, || {}).await
 }
 
 async fn cleanup_credentials_locked(repo: &HistoryRepository) -> Result<()> {

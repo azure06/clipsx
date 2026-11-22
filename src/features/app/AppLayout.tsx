@@ -44,6 +44,7 @@ import {
 } from '../../shared/sync/configSync'
 import { createCoalescedRefresh } from './coalescedRefresh'
 import { clampHistoryRatio, SPLITTER_WIDTH_PX } from './splitLayout'
+import { useLocalAiSetup } from '../intelligence/localAiSetup'
 
 const Settings = lazy(() =>
   import('../settings/Settings').then(module => ({ default: module.Settings }))
@@ -56,6 +57,11 @@ const IntelligencePage = lazy(() =>
 )
 const RecallPage = lazy(() =>
   import('../recall/RecallPage').then(module => ({ default: module.RecallPage }))
+)
+const LocalAiSetupDialog = lazy(() =>
+  import('../intelligence/LocalAiSetupDialog').then(module => ({
+    default: module.LocalAiSetupDialog,
+  }))
 )
 
 const ScreenLoading = () => {
@@ -73,6 +79,7 @@ const ScreenLoading = () => {
 export const AppLayout = () => {
   const { t } = useTranslation()
   const activeView = useUIStore(state => state.activeView)
+  const localAiSetupOpen = useLocalAiSetup(state => state.open)
   const recallVisible = activeView === 'recall'
   const setActiveView = useUIStore(state => state.setActiveView)
   const previewClipId = useUIStore(state => state.previewClipId)
@@ -677,6 +684,11 @@ export const AppLayout = () => {
 
       {/* 4. BottomBar (Bottom, Full Width) */}
       <BottomBar />
+      {localAiSetupOpen && (
+        <Suspense fallback={null}>
+          <LocalAiSetupDialog />
+        </Suspense>
+      )}
     </div>
   )
 }

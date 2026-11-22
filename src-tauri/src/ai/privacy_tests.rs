@@ -313,7 +313,7 @@ async fn provider_failures_are_informational_and_stage_specific() {
                 .unwrap()
                 .contains("timeout fixture")
             {
-                tokio::time::sleep(std::time::Duration::from_secs(13)).await;
+                std::future::pending::<()>().await;
             }
             if body["questions"].get("secret").is_some()
                 && body["state"]["clipboard_text"]

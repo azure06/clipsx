@@ -76,6 +76,50 @@ async fn fixture() -> (tempfile::TempDir, HistoryRepository, AiConfiguration) {
 }
 
 #[tokio::test]
+async fn model_edits_and_provider_file_imports_keep_other_assignments() {
+    let (_root, repo, original) = fixture().await;
+    let result = edit(
+        &repo,
+        AiConfigurationEdit::Assignment {
+            role: AiAssignment::DefaultChat,
+            id: None,
+        },
+    )
+    .await
+    .unwrap();
+    let selections = result.configuration.selections;
+    assert!(selections.default_chat.is_none());
+    assert_eq!(
+        selections.privacy_decision,
+        original.selections.privacy_decision
+    );
+    assert_eq!(
+        selections.active_embedding,
+        original.selections.active_embedding
+    );
+    assert_eq!(
+        selections.extension_generation,
+        original.selections.extension_generation
+    );
+
+    let mut incoming = original;
+    incoming.connections[1].name = "Imported provider name".into();
+    let imported = import_file(&repo, incoming, false)
+        .await
+        .unwrap()
+        .configuration;
+    assert!(imported.selections.default_chat.is_none());
+    assert_eq!(
+        imported.selections.privacy_decision,
+        selections.privacy_decision
+    );
+    assert!(imported
+        .connections
+        .iter()
+        .any(|connection| connection.name == "Imported provider name"));
+}
+
+#[tokio::test]
 async fn removing_default_preset_clears_assignments_and_chat_links_without_deleting_data() {
     let (_root, repo, document) = fixture().await;
     let chat = &document.presets[0].id;

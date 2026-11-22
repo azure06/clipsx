@@ -16,6 +16,7 @@ import {
 import { SearchableSelect } from '../../shared/components/ui/SearchableSelect'
 import { dropdownItemClass } from '../../shared/components/ui/dropdownStyles'
 import { ProviderIcon } from '../intelligence/ProviderIcon'
+import { useLocalAiSetup } from '../intelligence/localAiSetup'
 import { useUIStore } from '../../stores/uiStore'
 import type {
   AiConfiguration,
@@ -45,6 +46,7 @@ export function RecallOptions({
   onWeb: (enabled: boolean) => void
 }) {
   const { t, i18n } = useTranslation()
+  const showLocalSetup = useLocalAiSetup(state => state.show)
   const connection = configuration?.connections.find(c => c.id === preset?.connectionId)
   const key = JSON.stringify([preset, connection])
   const [observation, setObservation] = useState<{
@@ -216,9 +218,16 @@ export function RecallOptions({
         </DropdownMenuContent>
       </DropdownMenu>
       {!preset && (
-        <Button size="sm" variant="ghost" onClick={settings}>
-          {t('recallPage.configureModels')}
-        </Button>
+        <>
+          {!configuredModels.some(model => !model.disabled) && (
+            <Button size="sm" variant="outline" disabled={!thread} onClick={showLocalSetup}>
+              {t('localAiSetup.title')}
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={settings}>
+            {t('recallPage.configureModels')}
+          </Button>
+        </>
       )}
     </div>
   )

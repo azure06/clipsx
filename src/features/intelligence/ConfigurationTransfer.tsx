@@ -63,27 +63,22 @@ export function ConfigurationTransfer({
     )
   const connections = preview ? changed(current.connections, preview.connections) : []
   const presets = preview ? changed(current.presets, preview.presets) : []
-  const assignmentChanges = preview
-    ? selectionKeys.filter(
-        key => (current.selections[key] ?? null) !== (preview.selections[key] ?? null)
-      )
-    : []
+  const assignmentChanges =
+    preview && includeAssignments
+      ? selectionKeys.filter(
+          key => (current.selections[key] ?? null) !== (preview.selections[key] ?? null)
+        )
+      : []
   const assignmentName = (document: AiConfiguration, key: keyof AiSelections) =>
     document.presets.find(p => p.id === document.selections[key])?.name ??
     document.connections.find(c => c.id === document.selections[key])?.name ??
     t('aiConfig.none')
   const prepare = async (document: AiConfiguration, assignments: boolean) => {
-    // Rust validates the complete file, including selections the user may choose not to apply.
-    const validated = await invoke<AiConfiguration>('ai_configuration_preview', {
-      configuration: document,
-    })
-    const effective = {
-      ...document,
-      version: 4,
-      selections: assignments ? validated.selections : current.selections,
-    }
     setPreview(
-      await invoke<AiConfiguration>('ai_configuration_preview', { configuration: effective })
+      await invoke<AiConfiguration>('ai_configuration_preview', {
+        configuration: document,
+        includeAssignments: assignments,
+      })
     )
     return document
   }
@@ -311,16 +306,12 @@ export function ConfigurationTransfer({
                 void (async () => {
                   if (!incoming || !preview) return
                   if (
-                    await perform(async () => {
-                      const latest = await invoke<AiConfiguration>('ai_configuration_export')
-                      await invoke('ai_configuration_import', {
-                        configuration: {
-                          ...incoming,
-                          version: 4,
-                          selections: includeAssignments ? preview.selections : latest.selections,
-                        },
+                    await perform(() =>
+                      invoke('ai_configuration_import', {
+                        configuration: incoming,
+                        includeAssignments,
                       })
-                    })
+                    )
                   )
                     onImported()
                 })()
