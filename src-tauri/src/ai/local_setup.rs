@@ -223,6 +223,34 @@ fn memory_bytes() -> Option<u64> {
     Some(status.ullTotalPhys)
 }
 
+#[cfg(target_os = "macos")]
+fn memory_bytes() -> Option<u64> {
+    let output = Command::new("/usr/sbin/sysctl")
+        .args(["-n", "hw.memsize"])
+        .output()
+        .ok()?;
+    std::str::from_utf8(&output.stdout)
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn memory_bytes() -> Option<u64> {
+    std::fs::read_to_string("/proc/meminfo")
+        .ok()?
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("MemTotal:")?
+                .split_whitespace()
+                .next()?
+                .parse::<u64>()
+                .ok()?
+                .checked_mul(1024)
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,32 +449,4 @@ mod tests {
         assert_eq!(answers["sample"], 0.9);
         server.abort();
     }
-}
-
-#[cfg(target_os = "macos")]
-fn memory_bytes() -> Option<u64> {
-    let output = Command::new("/usr/sbin/sysctl")
-        .args(["-n", "hw.memsize"])
-        .output()
-        .ok()?;
-    std::str::from_utf8(&output.stdout)
-        .ok()?
-        .trim()
-        .parse()
-        .ok()
-}
-
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn memory_bytes() -> Option<u64> {
-    std::fs::read_to_string("/proc/meminfo")
-        .ok()?
-        .lines()
-        .find_map(|line| {
-            line.strip_prefix("MemTotal:")?
-                .split_whitespace()
-                .next()?
-                .parse::<u64>()
-                .ok()?
-                .checked_mul(1024)
-        })
 }
