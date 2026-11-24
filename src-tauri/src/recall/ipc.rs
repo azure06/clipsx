@@ -368,11 +368,14 @@ pub async fn assistant_search_clips(
     webview: tauri::Webview,
     state: State<'_, AppState>,
     request: ClipSearchRequest,
+    cancellation_id: Option<tauri::ResourceId>,
 ) -> Result<ClipSearchResult, OperationFailure> {
-    service(&webview, &state)?
-        .search(request)
-        .await
-        .map_err(public_failure)
+    let clipboard = service(&webview, &state)?;
+    crate::search::InteractiveSearch::run(&webview, cancellation_id, |semantic_budget| {
+        clipboard.search_with_semantic_budget(request, semantic_budget)
+    })
+    .await
+    .map_err(public_failure)
 }
 #[tauri::command]
 pub async fn assistant_read_clip(

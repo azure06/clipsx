@@ -60,17 +60,8 @@ impl ClipboardService {
         )
         .fetch_one(&self.history.pool)
         .await?;
-        let active_index: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM search_index_generations WHERE status='active')",
-        )
-        .fetch_one(&self.history.pool)
-        .await?;
         let provider = search::semantic::status(&self.history).await?;
-        let semantic_ready = active_index
-            && matches!(
-                provider.phase,
-                search::semantic::ProviderPhase::Ready | search::semantic::ProviderPhase::Indexing
-            );
+        let semantic_ready = provider.enabled && provider.active_space_id.is_some();
         Ok(ClipboardStatus {
             api_version: 1,
             now: crate::history::now_ms() as f64,
@@ -229,6 +220,15 @@ impl ClipboardService {
     }
 
     pub async fn search(&self, request: ClipSearchRequest) -> Result<ClipSearchResult> {
+        self.search_with_semantic_budget(request, search::TOOL_SEMANTIC_BUDGET)
+            .await
+    }
+
+    pub(crate) async fn search_with_semantic_budget(
+        &self,
+        request: ClipSearchRequest,
+        semantic_budget: std::time::Duration,
+    ) -> Result<ClipSearchResult> {
         if request.query.len() > 8 * 1024
             || request.cursor.as_ref().is_some_and(|v| v.len() > 4096)
             || request.limit.is_some_and(|v| v == 0 || v > 50)
@@ -266,7 +266,7 @@ impl ClipboardService {
             syntax_mode: search::SyntaxMode::Simple,
             enabled_source_ids: native.enabled_source_ids.clone(),
         };
-        let page = search::search(&self.history, &native, &settings).await?;
+        let page = search::search(&self.history, &native, &settings, semantic_budget).await?;
         let mut warnings = Vec::new();
         let mut items = Vec::new();
         for result in page.items {

@@ -8,7 +8,6 @@ use super::store::{
 use crate::{
     history::{new_id, now_ms, sha256, ClipSummary, HistoryRepository},
     providers::{
-        self,
         contracts::text_embedding::{TextEmbeddingProvider, TextEmbeddingSpace},
         error::ProviderError,
         model_catalog::{self, ModelCapability},
@@ -19,7 +18,7 @@ use crate::{
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Executor, Row, Sqlite, SqlitePool};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Duration;
 
@@ -27,7 +26,6 @@ const PROVIDER_CONFIG_KEY: &str = "providers.text_embedding.active";
 const MIN_FALLBACK_BYTES: usize = 128;
 const MAX_FALLBACK_DEPTH: u8 = 4;
 const MAX_EMBED_REQUESTS_PER_CLIP: usize = 128;
-const QUERY_EMBEDDING_TIMEOUT: Duration = Duration::from_secs(4);
 const HAS_SEMANTIC_CONTENT: &str = "c.lifecycle_state='ready' AND (
   trim(COALESCE(c.note,'')) <> ''
   OR EXISTS(SELECT 1 FROM catalog_clip_tags ct WHERE ct.clip_id=c.id)
@@ -54,6 +52,8 @@ fn eligible_clip_predicate() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderStatus {
+    pub indexing_timeout_seconds: u64,
+    pub indexing_timeout_choices: [u16; 3],
     pub enabled: bool,
     pub phase: ProviderPhase,
     pub active_space_id: Option<String>,
@@ -111,8 +111,7 @@ pub async fn configure(repo: &HistoryRepository, model: String) -> Result<Provid
         enabled: true,
         minimum_similarity_percent: None,
     };
-    let endpoint = model_catalog::endpoint(repo).await?;
-    let provider = providers::text_embedding_provider(&config, &endpoint, None)?;
+    let provider = crate::ai::embedding::resolve_embedding(repo, &config, None).await?;
     let descriptor = provider.describe().await?;
     configure_descriptor(repo, config, descriptor).await
 }
@@ -181,6 +180,11 @@ pub async fn configure_descriptor(
             .bind(now_ms())
             .execute(&repo.pool)
             .await?;
+    } else if generation_by_status(repo, "failed")
+        .await?
+        .is_some_and(|failed| failed.space_id != space_id)
+    {
+        cancel_failed_generations(repo).await?;
     }
     status(repo).await
 }
@@ -195,9 +199,14 @@ pub async fn disable(repo: &HistoryRepository) -> Result<()> {
 
 pub async fn status(repo: &HistoryRepository) -> Result<ProviderStatus> {
     let config = get_device_config(&repo.pool).await?;
+    let indexing_timeout_seconds = crate::ai::embedding::indexing_timeout(repo)
+        .await?
+        .as_secs();
     let eligible = eligible_clip_count(repo).await?;
     let Some(config) = config else {
         return Ok(ProviderStatus {
+            indexing_timeout_seconds,
+            indexing_timeout_choices: crate::ai::embedding::INDEXING_TIMEOUT_CHOICES,
             enabled: false,
             phase: ProviderPhase::NotConfigured,
             active_space_id: None,
@@ -215,16 +224,12 @@ pub async fn status(repo: &HistoryRepository) -> Result<ProviderStatus> {
         });
     };
     let active = generation_by_status(repo, "active").await?;
-    let building = generation_by_status(repo, "building").await?;
-    let failed_generation = generation_by_status(repo, "failed").await?;
-    // A retained failed rebuild is diagnostic history, not the live index.
-    // Prefer the active generation once no rebuild is currently running.
-    let target = building
+    let target = select_generation(&repo.pool, None).await?;
+    let (indexed, pending, failed, job_diagnostic) =
+        generation_counts(repo, target.as_ref()).await?;
+    let dimensions = target
         .as_ref()
-        .or(active.as_ref())
-        .or(failed_generation.as_ref());
-    let (indexed, pending, failed, job_diagnostic) = generation_counts(repo, target).await?;
-    let dimensions = target.map(|generation| generation.dimensions as u32);
+        .map(|generation| generation.dimensions as u32);
     let index_bytes = active
         .as_ref()
         .and_then(|generation| {
@@ -252,18 +257,25 @@ pub async fn status(repo: &HistoryRepository) -> Result<ProviderStatus> {
         .or(cleanup_diagnostic(repo).await?);
     let phase = if !config.enabled {
         ProviderPhase::Disabled
-    } else if diagnostic.is_some() || failed > 0 || (active.is_none() && building.is_none()) {
+    } else if diagnostic.is_some() || failed > 0 {
         ProviderPhase::Degraded
-    } else if building.is_some() || pending > 0 {
-        ProviderPhase::Indexing
     } else {
-        ProviderPhase::Ready
+        match target.as_ref().map(|generation| generation.status.as_str()) {
+            Some("building") => ProviderPhase::Indexing,
+            Some("active") if pending > 0 => ProviderPhase::Indexing,
+            Some("active") => ProviderPhase::Ready,
+            _ => ProviderPhase::Degraded,
+        }
     };
     Ok(ProviderStatus {
+        indexing_timeout_seconds,
+        indexing_timeout_choices: crate::ai::embedding::INDEXING_TIMEOUT_CHOICES,
         enabled: config.enabled,
         phase,
         active_space_id: active.map(|value| value.space_id),
-        pending_space_id: building.or(failed_generation).map(|value| value.space_id),
+        pending_space_id: target
+            .filter(|generation| generation.status != "active")
+            .map(|generation| generation.space_id),
         diagnostic,
         indexed_clips: indexed as u64,
         pending_jobs: pending as u64,
@@ -316,14 +328,7 @@ async fn eligible_clip_count(repo: &HistoryRepository) -> Result<i64> {
 }
 
 pub async fn failed_jobs(repo: &HistoryRepository, limit: u32) -> Result<Vec<FailedEmbeddingJob>> {
-    // Mirror `status`: an active generation can have an individual failed job
-    // after an index-missing run, while a rebuilding generation becomes failed
-    // only once it settles.
-    let generation = generation_by_status(repo, "building")
-        .await?
-        .or(generation_by_status(repo, "active").await?)
-        .or(generation_by_status(repo, "failed").await?);
-    let Some(generation) = generation else {
+    let Some(generation) = select_generation(&repo.pool, None).await? else {
         return Ok(Vec::new());
     };
     let rows = sqlx::query(
@@ -396,9 +401,9 @@ async fn job_count(repo: &HistoryRepository, generation: &str, predicate: &str) 
 
 pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
     let config = enabled_config(repo).await?;
-    let generation = target_generation_for_work(repo)
-        .await?
-        .context("no embedding generation")?;
+    let Some(generation) = target_generation_for_work(repo).await? else {
+        return Ok(0);
+    };
     let rows = sqlx::query(
         "SELECT id,clip_id FROM search_index_jobs WHERE generation_id=? AND status='pending'
          ORDER BY requested_at,id LIMIT 16",
@@ -475,7 +480,10 @@ pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
                 .await?;
             }
             Err(error) => {
-                let error_message = error.to_string();
+                let error_message = match error.downcast_ref::<ProviderError>() {
+                    Some(ProviderError::Timeout) => ProviderError::Timeout.code().into(),
+                    _ => error.to_string(),
+                };
                 sqlx::query(
                     "UPDATE search_index_jobs SET
                      status=CASE WHEN attempt_count >= 3 THEN 'failed' ELSE 'pending' END,
@@ -1084,26 +1092,7 @@ pub async fn reindex(repo: &HistoryRepository) -> Result<()> {
 
 pub async fn index_missing(repo: &HistoryRepository) -> Result<()> {
     enabled_config(repo).await?;
-    if generation_by_status(repo, "building").await?.is_some() {
-        return Ok(());
-    }
-    let active = generation_by_status(repo, "active")
-        .await?
-        .context("no active embedding generation")?;
-    let eligible = eligible_clip_predicate();
-    let sql = format!(
-        "SELECT c.id FROM clip_items c WHERE {eligible} AND NOT EXISTS(
-           SELECT 1 FROM search_index_jobs j WHERE j.clip_id=c.id
-           AND j.generation_id=? AND j.status='completed')"
-    );
-    let clips: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
-        .bind(&active.id)
-        .fetch_all(&repo.pool)
-        .await?;
-    for clip in clips {
-        enqueue_job(repo, &active.id, &clip).await?;
-    }
-    Ok(())
+    requeue_index_jobs(repo, true).await
 }
 
 pub async fn enqueue_clip(repo: &HistoryRepository, clip_id: &str) -> Result<()> {
@@ -1267,10 +1256,13 @@ pub async fn ensure_current_chunker(repo: &HistoryRepository) -> Result<bool> {
     let Some(config) = get_device_config(&repo.pool).await? else {
         return Ok(false);
     };
-    if !config.enabled || generation_by_status(repo, "building").await?.is_some() {
+    if !config.enabled {
         return Ok(false);
     }
-    let Some(active) = generation_by_status(repo, "active").await? else {
+    let Some(active) = select_generation(&repo.pool, None)
+        .await?
+        .filter(|generation| generation.status == "active")
+    else {
         return Ok(false);
     };
     let version: String =
@@ -1286,32 +1278,52 @@ pub async fn ensure_current_chunker(repo: &HistoryRepository) -> Result<bool> {
 }
 
 pub async fn retry_failed(repo: &HistoryRepository) -> Result<()> {
-    let generation = generation_by_status(repo, "building")
-        .await?
-        .or(generation_by_status(repo, "active").await?)
-        .or(generation_by_status(repo, "failed").await?);
-    let Some(generation) = generation else {
+    requeue_index_jobs(repo, false).await
+}
+
+async fn requeue_index_jobs(repo: &HistoryRepository, include_missing: bool) -> Result<()> {
+    let mut tx = repo.pool.begin_with("BEGIN IMMEDIATE").await?;
+    let Some(Generation { id, status, .. }) = select_generation(&mut *tx, None).await? else {
+        if include_missing {
+            bail!("Meaning Search has no index to resume. Choose Reindex all to build one.");
+        }
         return Ok(());
     };
-    let mut tx = repo.pool.begin().await?;
-    if generation.status == "failed" {
-        sqlx::query(
-            "UPDATE search_index_generations
-             SET status='building',completed_at=NULL,updated_at=? WHERE id=?",
-        )
-        .bind(now_ms())
-        .bind(&generation.id)
-        .execute(&mut *tx)
-        .await?;
+    if include_missing && status == "building" {
+        return Ok(());
     }
+    let now = now_ms();
     sqlx::query(
         "UPDATE search_index_jobs SET status='pending',attempt_count=0,last_error=NULL,
          completed_at=NULL,updated_at=? WHERE generation_id=? AND status='failed'",
     )
-    .bind(now_ms())
-    .bind(&generation.id)
+    .bind(now)
+    .bind(&id)
     .execute(&mut *tx)
     .await?;
+    if include_missing {
+        let eligible = eligible_clip_predicate();
+        let sql = format!(
+            "INSERT INTO search_index_jobs(id,generation_id,clip_id,status,requested_at)
+             SELECT lower(hex(randomblob(16))),?,c.id,'pending',? FROM clip_items c WHERE {eligible}
+             ON CONFLICT(generation_id,clip_id) DO NOTHING"
+        );
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(&id)
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if status == "failed" {
+        sqlx::query(
+            "UPDATE search_index_generations
+             SET status='building',completed_at=NULL,updated_at=? WHERE id=?",
+        )
+        .bind(now)
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+    }
     tx.commit().await?;
     Ok(())
 }
@@ -1339,6 +1351,7 @@ pub async fn semantic_matches(
     query: &str,
     eligible_ids: &HashMap<String, i64>,
     limit: usize,
+    query_budget: Duration,
 ) -> Result<Vec<(String, f64, String)>> {
     let config = enabled_config(repo).await?;
     let active = generation_by_status(repo, "active")
@@ -1371,8 +1384,16 @@ pub async fn semantic_matches(
         sqlx::query("UPDATE search_embedding_spaces SET provider_binding_json=? WHERE id=? AND provider_binding_json IS NULL")
             .bind(serde_json::to_string(&binding)?).bind(&active.space_id).execute(&repo.pool).await?;
     }
-    semantic_matches_with_provider(repo, &active, provider.as_ref(), query, eligible_ids, limit)
-        .await
+    semantic_matches_with_provider(
+        repo,
+        &active,
+        provider.as_ref(),
+        query,
+        eligible_ids,
+        limit,
+        query_budget,
+    )
+    .await
 }
 
 async fn ensure_space_compatible(
@@ -1460,16 +1481,15 @@ async fn semantic_matches_with_provider(
     query: &str,
     eligible_ids: &HashMap<String, i64>,
     limit: usize,
+    query_budget: Duration,
 ) -> Result<Vec<(String, f64, String)>> {
     if limit == 0 || eligible_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let mut query_vectors = tokio::time::timeout(
-        QUERY_EMBEDDING_TIMEOUT,
-        provider.embed_queries(&[query.into()]),
-    )
-    .await
-    .map_err(|_| ProviderError::Unavailable("query embedding timed out".into()))??;
+    let mut query_vectors =
+        tokio::time::timeout(query_budget, provider.embed_queries(&[query.into()]))
+            .await
+            .map_err(|_| ProviderError::Unavailable("query embedding timed out".into()))??;
     let query_vector = query_vectors.pop().context("missing query embedding")?;
     validate_vector(&query_vector, Some(generation.dimensions))?;
     Ok(SemanticIndexStore::new(&repo.semantic_index_root)?
@@ -1491,15 +1511,26 @@ async fn generation_by_status(
     repo: &HistoryRepository,
     status: &str,
 ) -> Result<Option<Generation>> {
+    select_generation(&repo.pool, Some(status)).await
+}
+
+// With no explicit status, prefer the latest build target. An older active
+// generation remains usable for queries while a replacement waits for retry.
+async fn select_generation<'e>(
+    database: impl Executor<'e, Database = Sqlite>,
+    status: Option<&str>,
+) -> Result<Option<Generation>> {
     Ok(sqlx::query(
         "SELECT g.id,g.space_id,g.status,s.dimensions,g.sidecar_relative_path
          FROM search_index_generations g
          JOIN search_embedding_spaces s ON s.id=g.space_id
-         WHERE g.source_id=? AND g.status=? ORDER BY g.generation DESC LIMIT 1",
+         WHERE g.source_id=?1 AND (g.status=?2 OR (?2 IS NULL AND g.status IN ('building','failed','active')))
+         ORDER BY CASE g.status WHEN 'building' THEN 0 WHEN 'failed' THEN 1 ELSE 2 END,
+                  g.generation DESC LIMIT 1",
     )
     .bind(SEMANTIC_TEXT_SOURCE_ID)
     .bind(status)
-    .fetch_optional(&repo.pool)
+    .fetch_optional(database)
     .await?
     .map(|row| Generation {
         id: row.get(0),
@@ -1511,10 +1542,9 @@ async fn generation_by_status(
 }
 
 async fn target_generation_for_work(repo: &HistoryRepository) -> Result<Option<Generation>> {
-    if let Some(building) = generation_by_status(repo, "building").await? {
-        return Ok(Some(building));
-    }
-    generation_by_status(repo, "active").await
+    Ok(select_generation(&repo.pool, None)
+        .await?
+        .filter(|generation| generation.status != "failed"))
 }
 
 fn compatibility_sha256(space: &TextEmbeddingSpace) -> Result<String> {
@@ -2100,6 +2130,7 @@ mod tests {
             "query",
             &HashMap::from([(second.clone(), 1)]),
             10,
+            crate::search::TOOL_SEMANTIC_BUDGET,
         )
         .await
         .unwrap();
@@ -2595,6 +2626,72 @@ mod tests {
         assert!(cleanup_pending(&repo).await.unwrap());
         assert_eq!(process_cleanup(&repo).await.unwrap(), 1);
         assert!(!cleanup_pending(&repo).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn index_missing_resumes_a_failed_first_build_and_preserves_completed_jobs() {
+        let (_temp, repo) = repository().await;
+        put_device_config(
+            &repo.pool,
+            &TextEmbeddingProviderConfig {
+                provider_id: "test.embedding".into(),
+                model: "test".into(),
+                enabled: true,
+                minimum_similarity_percent: None,
+            },
+        )
+        .await
+        .unwrap();
+        let completed = insert_text_clip(&repo, "already indexed content").await;
+        let failed = insert_text_clip(&repo, "content that timed out").await;
+        let generation = create_space_from_descriptor(&repo, &test_space())
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE search_index_jobs SET status='completed',attempt_count=1
+             WHERE generation_id=? AND clip_id=?",
+        )
+        .bind(&generation.id)
+        .bind(&completed)
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE search_index_jobs SET status='failed',attempt_count=3,last_error='provider_timeout'
+             WHERE generation_id=? AND clip_id=?",
+        )
+        .bind(&generation.id)
+        .bind(&failed)
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+        settle_generation(&repo, &generation).await.unwrap();
+        assert_eq!(index_pending(&repo).await.unwrap(), 0);
+        let missing = insert_text_clip(&repo, "captured after the first build failed").await;
+
+        index_missing(&repo).await.unwrap();
+        index_missing(&repo).await.unwrap();
+
+        let resumed = generation_by_status(&repo, "building")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(resumed.id, generation.id);
+        let jobs: HashMap<String, (String, i64, Option<String>)> =
+            sqlx::query_as::<_, (String, String, i64, Option<String>)>(
+                "SELECT clip_id,status,attempt_count,last_error FROM search_index_jobs WHERE generation_id=?",
+            )
+            .bind(&generation.id)
+            .fetch_all(&repo.pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(clip, status, attempts, error)| (clip, (status, attempts, error)))
+            .collect();
+        assert_eq!(jobs.len(), 3);
+        assert_eq!(jobs[&completed], ("completed".into(), 1, None));
+        assert_eq!(jobs[&failed], ("pending".into(), 0, None));
+        assert_eq!(jobs[&missing], ("pending".into(), 0, None));
     }
 
     #[tokio::test]

@@ -9,9 +9,46 @@ use crate::{
     },
 };
 use anyhow::{bail, Context, Result};
+use std::time::Duration;
 
 mod binding;
 pub(crate) use binding::{capture_binding, resolve_binding, EmbeddingBinding};
+
+const INDEXING_TIMEOUT_KEY: &str = "providers.text_embedding.timeout_seconds";
+const DEFAULT_INDEXING_TIMEOUT_SECONDS: u16 = 120;
+pub(crate) const INDEXING_TIMEOUT_CHOICES: [u16; 3] = [60, 120, 300];
+
+pub(crate) async fn indexing_timeout(repo: &HistoryRepository) -> Result<Duration> {
+    let value: Option<String> =
+        sqlx::query_scalar("SELECT value_json FROM config_device_values WHERE key=?")
+            .bind(INDEXING_TIMEOUT_KEY)
+            .fetch_optional(&repo.pool)
+            .await?;
+    let seconds = value
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<u16>(value).ok())
+        .filter(|seconds| INDEXING_TIMEOUT_CHOICES.contains(seconds))
+        .unwrap_or(DEFAULT_INDEXING_TIMEOUT_SECONDS);
+    Ok(Duration::from_secs(seconds.into()))
+}
+
+pub(crate) async fn set_indexing_timeout(repo: &HistoryRepository, seconds: u16) -> Result<()> {
+    if !INDEXING_TIMEOUT_CHOICES.contains(&seconds) {
+        bail!("indexing timeout must be 60, 120, or 300 seconds");
+    }
+    let now = crate::history::now_ms();
+    sqlx::query(
+        "INSERT INTO config_device_values(key,value_json,created_at,updated_at) VALUES(?,?,?,?)
+         ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at",
+    )
+    .bind(INDEXING_TIMEOUT_KEY)
+    .bind(serde_json::to_string(&seconds)?)
+    .bind(now)
+    .bind(now)
+    .execute(&repo.pool)
+    .await?;
+    Ok(())
+}
 
 /// Protocol options and host bounds. Unknown models do not inherit claimed capacities.
 pub fn information(provider: AiProviderKind, model: &str) -> EmbeddingModelInformation {
@@ -91,9 +128,14 @@ pub async fn embedding_provider_for(
     }
     let base = validate_connection(connection)?;
     let model = model.unwrap_or(&preset.model_id);
+    let timeout = indexing_timeout(repo).await?;
     if connection.provider == AiProviderKind::Ollama {
         return Ok(Box::new(
-            providers::ollama::OllamaTextEmbeddingProvider::new(base.as_str(), model.into())?,
+            providers::ollama::OllamaTextEmbeddingProvider::new(
+                base.as_str(),
+                model.into(),
+                timeout,
+            )?,
         ));
     }
     let options = preset
@@ -113,6 +155,7 @@ pub async fn embedding_provider_for(
             model.into(),
             credential,
             options.clone(),
+            timeout,
         )?,
     ))
 }
@@ -140,13 +183,36 @@ pub async fn resolve_embedding(
     }
     let endpoint = providers::model_catalog::endpoint(repo).await?;
     Ok(providers::text_embedding_provider(
-        config, &endpoint, model,
+        config,
+        &endpoint,
+        model,
+        indexing_timeout(repo).await?,
     )?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn indexing_timeout_is_device_local_and_bounded() {
+        let (_temp, service) = crate::recall::service_tests::repository().await;
+        let repo = &service.history;
+        assert_eq!(
+            indexing_timeout(repo).await.unwrap(),
+            Duration::from_secs(120)
+        );
+        set_indexing_timeout(repo, 300).await.unwrap();
+        assert!(set_indexing_timeout(repo, 0).await.is_err());
+        assert_eq!(
+            crate::search::semantic::status(repo)
+                .await
+                .unwrap()
+                .indexing_timeout_seconds,
+            300
+        );
+    }
+
     #[test]
     fn options_are_embedding_specific_and_unknown_capabilities_stay_unknown() {
         let unknown = information(AiProviderKind::Openrouter, "custom/embedding");

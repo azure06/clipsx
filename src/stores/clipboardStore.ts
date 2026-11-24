@@ -17,7 +17,11 @@ import type {
   V2Tag,
 } from '../shared/types/v2'
 import { parseSearch } from '../features/search/searchQuery'
-import { KEYWORD_DELAY_MS, SEMANTIC_DELAY_MS } from '../features/search/progressive'
+import {
+  KEYWORD_DELAY_MS,
+  searchWhileCurrent,
+  SEMANTIC_DELAY_MS,
+} from '../features/search/progressive'
 type V2Representation = {
   canonicalMimeType: string | null
   textValue: string | null
@@ -143,9 +147,12 @@ const mergeTags = (current: V2Tag[], incoming: V2Tag[]): V2Tag[] => {
   return changed ? [...byId.values()].sort((a, b) => a.name.localeCompare(b.name)) : current
 }
 let semanticTimer: ReturnType<typeof setTimeout> | undefined
+let semanticController: AbortController | undefined
 const cancelSemantic = () => {
   clearTimeout(semanticTimer)
   semanticTimer = undefined
+  semanticController?.abort()
+  semanticController = undefined
 }
 
 const scope = (state: ClipboardState) => (state.activeTab === 'all' ? 'all' : state.activeTab)
@@ -333,8 +340,11 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
         semanticTimer = setTimeout(
           () => {
             semanticTimer = undefined
-            void invoke<V2SearchPage>('search_clips', {
-              request: {
+            const controller = new AbortController()
+            semanticController = controller
+            void searchWhileCurrent<V2SearchPage>(
+              'search_clips',
+              {
                 query: parsed.query,
                 representationFamilies: parsed.representationFamilies,
                 facetIds: parsed.facetIds,
@@ -344,7 +354,8 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
                 cursor: null,
                 enabledSourceIds: ['builtin.search.fts', 'builtin.search.semantic_text'],
               },
-            })
+              controller.signal
+            )
               .then(result => {
                 if (generation !== requestGeneration) return
                 set(current => {
@@ -392,6 +403,9 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
                     },
                   ],
                 }))
+              })
+              .finally(() => {
+                if (semanticController === controller) semanticController = undefined
               })
           },
           Math.max(0, SEMANTIC_DELAY_MS - KEYWORD_DELAY_MS - (Date.now() - started))

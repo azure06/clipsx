@@ -93,7 +93,12 @@ pub(crate) async fn resolve_binding(
             if providers::model_catalog::endpoint(repo).await? != *endpoint {
                 bail!("embedding_binding_unavailable");
             }
-            Ok(providers::text_embedding_provider(config, endpoint, None)?)
+            Ok(providers::text_embedding_provider(
+                config,
+                endpoint,
+                None,
+                indexing_timeout(repo).await?,
+            )?)
         }
     }
 }

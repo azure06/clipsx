@@ -2836,24 +2836,36 @@ async fn redetect_history(
 }
 
 #[tauri::command]
+fn prepare_interactive_search(webview: tauri::Webview) -> Result<tauri::ResourceId, String> {
+    if webview.label() != "main" {
+        return Err("interactive search requires the main window".into());
+    }
+    Ok(webview
+        .resources_table()
+        .add(search::InteractiveSearch::default()))
+}
+
+#[tauri::command]
 async fn search_clips(
     request: search::SearchRequest,
     state: State<'_, AppState>,
+    webview: tauri::Webview,
+    cancellation_id: Option<tauri::ResourceId>,
 ) -> Result<search::SearchPage, String> {
-    let settings = search::get_settings(&state.history.pool)
-        .await
-        .map_err(|e| e.to_string())?;
-    let mut page = search::search(&state.history, &request, &settings)
-        .await
-        .map_err(|error| error.to_string())?;
-    state
-        .extensions
-        .apply_history_extension_icons(
-            &state.history,
-            page.items.iter_mut().map(|result| &mut result.clip),
-        )
-        .await;
-    Ok(page)
+    search::InteractiveSearch::run(&webview, cancellation_id, |semantic_budget| async move {
+        let settings = search::get_settings(&state.history.pool).await?;
+        let mut page = search::search(&state.history, &request, &settings, semantic_budget).await?;
+        state
+            .extensions
+            .apply_history_extension_icons(
+                &state.history,
+                page.items.iter_mut().map(|result| &mut result.clip),
+            )
+            .await;
+        Ok(page)
+    })
+    .await
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -2933,6 +2945,16 @@ async fn update_text_embedding_threshold(
     let _ = app.emit("embedding-provider-status-changed", ());
     let _ = app.emit("meaning-search-threshold-changed", ());
     Ok(status)
+}
+
+#[tauri::command]
+async fn update_text_embedding_timeout(
+    timeout_seconds: u16,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    crate::ai::embedding::set_indexing_timeout(&state.history, timeout_seconds)
+        .await
+        .map_err(|error| error.to_string())
 }
 #[tauri::command]
 async fn list_failed_text_embedding_jobs(
@@ -3792,6 +3814,7 @@ crate::recall::ipc::recall_snapshot_image,
             update_renderer_preferences,
             redetect_clip,
             redetect_history,
+            prepare_interactive_search,
             search_clips,
             get_search_settings,
             update_search_settings,
@@ -3802,6 +3825,7 @@ crate::recall::ipc::recall_snapshot_image,
             disable_text_embedding_provider,
             get_text_embedding_status,
             update_text_embedding_threshold,
+            update_text_embedding_timeout,
             list_failed_text_embedding_jobs,
             configure_text_generation_provider,
             disable_text_generation_provider,

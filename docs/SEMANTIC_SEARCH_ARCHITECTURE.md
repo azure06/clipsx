@@ -444,7 +444,7 @@ Query/filter change -> invalidate old responses immediately
      semantic failure: retain usable keyword rows and report its source outcome
 ```
 
-History schedules keyword retrieval after 75 ms of inactivity. When Meaning Search is enabled, a separate hybrid request enriches the first keyword page at or after 250 ms, without delaying usable keyword results. Keyword pagination retains its own cursor and inserts additional keyword rows before Related matches; semantic enrichment is bounded to its first 50 candidates. Both paths share the native search engine and filters. Superseded requests and unmounted input controllers cannot publish enrichment. IME composition pauses retrieval.
+History schedules keyword retrieval after 75 ms of inactivity. When Meaning Search is enabled, a separate hybrid request enriches the first keyword page at or after 250 ms, without delaying usable keyword results. Keyword pagination retains its own cursor and inserts additional keyword rows before Related matches; semantic enrichment is bounded to its first 50 candidates. Both paths share the native search engine and filters. History and Recall draft suggestions allow up to 30 seconds to embed each background search query and cancel native enrichment when superseded or unmounted. Recall tool and MCP retrieval retain a four-second query embedding budget. IME composition pauses retrieval.
 
 Only pages from the current request may append. Selection survives by ID where
 possible and clears on empty results. Input remains editable; operations already
@@ -458,6 +458,13 @@ Models is the default Intelligence section; its shared configuration workspace i
 `completion` capabilities. Indexing owns progress, failures, retry, reindex,
 disk use, and reset. Extensions receive provider availability and output, never
 endpoint/model configuration or credentials.
+
+The advanced Indexing settings offer one, two, or five minutes per embedding
+request, with a two-minute default. Setup probes and background indexing use
+this device-local timeout for local and hosted providers. **Retry failed clips**
+requeues failed jobs. **Index missing** also queues eligible clips with no job.
+Both preserve completed work and can resume a failed build. The previous
+active index remains available for search while its replacement waits for retry.
 
 Contextual help uses the current app language and the existing external-browser
 command. Models links to the shared Local AI guide and its embedding/generation

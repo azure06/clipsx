@@ -5,14 +5,21 @@ import { useSettingsStore } from './settingsStore'
 import type { ClipSummary, V2Tag } from '../shared/types/v2'
 import { DEFAULT_SETTINGS } from '../shared/types'
 
-const { mockInvoke, mockHide, listeners } = vi.hoisted(() => ({
+const { mockInvoke, mockHide, mockClose, listeners } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
   mockHide: vi.fn(),
+  mockClose: vi.fn<(rid: number) => Promise<void>>(),
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: mockInvoke,
+  Resource: class {
+    constructor(readonly rid: number) {}
+    close() {
+      return mockClose(this.rid)
+    }
+  },
 }))
 
 vi.mock('@tauri-apps/api/event', () => ({
@@ -573,6 +580,7 @@ describe('useClipboardStore authoritative summary updates', () => {
 })
 
 describe('progressive History retrieval', () => {
+  const searchInvoke = vi.fn()
   const page = (ids: string[], semantic = false, cursor: string | null = null) => ({
     items: ids.map(id => ({
       clip: makeClip({ id }),
@@ -599,6 +607,13 @@ describe('progressive History retrieval', () => {
     useClipboardStore.setState(useClipboardStore.getInitialState(), true)
     useUIStore.setState({ isSemanticActive: true })
     mockInvoke.mockReset()
+    mockClose.mockReset().mockResolvedValue(undefined)
+    searchInvoke.mockReset()
+    mockInvoke.mockImplementation((command: string, args: unknown) =>
+      command === 'prepare_interactive_search'
+        ? Promise.resolve(27)
+        : (searchInvoke(command, args) as unknown)
+    )
   })
   afterEach(() => {
     useClipboardStore.getState().resetPagination()
@@ -606,7 +621,7 @@ describe('progressive History retrieval', () => {
   })
   it('publishes keywords before semantic response and preserves keyword cursor and row order', async () => {
     let finish!: (value: ReturnType<typeof page>) => void
-    mockInvoke
+    searchInvoke
       .mockResolvedValueOnce(page(['keyword'], false, 'keyword-cursor'))
       .mockImplementationOnce(
         () =>
@@ -619,11 +634,12 @@ describe('progressive History retrieval', () => {
     expect(useClipboardStore.getState().clips.map(clip => clip.id)).toEqual(['keyword'])
     expect(useClipboardStore.getState().semanticPending).toBe(true)
     await vi.advanceTimersByTimeAsync(175)
-    expect(mockInvoke).toHaveBeenCalledTimes(2)
+    expect(searchInvoke).toHaveBeenCalledTimes(2)
     finish(page(['keyword', 'related'], true))
     await vi.advanceTimersByTimeAsync(0)
     expect(useClipboardStore.getState().clips.map(clip => clip.id)).toEqual(['keyword', 'related'])
     expect(useClipboardStore.getState().relatedClipIds).toEqual(['related'])
+    expect(mockClose).toHaveBeenCalledExactlyOnceWith(27)
     await useClipboardStore.getState().loadMoreClips()
     expect(mockInvoke).toHaveBeenLastCalledWith('search_clips', {
       request: {
@@ -649,7 +665,7 @@ describe('progressive History retrieval', () => {
   })
   it('ignores semantic results from an obsolete query and cancels pending enrichment', async () => {
     let finish!: (value: ReturnType<typeof page>) => void
-    mockInvoke.mockResolvedValueOnce(page(['old'])).mockImplementationOnce(
+    searchInvoke.mockResolvedValueOnce(page(['old'])).mockImplementationOnce(
       () =>
         new Promise(resolve => {
           finish = resolve
@@ -657,19 +673,27 @@ describe('progressive History retrieval', () => {
     )
     await useClipboardStore.getState().enterSearchMode('old')
     await vi.advanceTimersByTimeAsync(175)
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'search_clips',
+      expect.objectContaining({
+        cancellationId: 27,
+      })
+    )
     useClipboardStore.getState().prepareSearch('new')
+    expect(mockClose).toHaveBeenCalledExactlyOnceWith(27)
     finish(page(['obsolete-related'], true))
     await vi.advanceTimersByTimeAsync(0)
     expect(useClipboardStore.getState().clips.map(clip => clip.id)).toEqual(['old'])
     expect(useClipboardStore.getState().semanticPending).toBe(false)
-    mockInvoke.mockResolvedValueOnce(page(['new']))
+    expect(mockClose).toHaveBeenCalledTimes(1)
+    searchInvoke.mockResolvedValueOnce(page(['new']))
     await useClipboardStore.getState().commitSearch()
     useClipboardStore.getState().prepareSearch('newer')
     await vi.advanceTimersByTimeAsync(500)
-    expect(mockInvoke).toHaveBeenCalledTimes(3)
+    expect(searchInvoke).toHaveBeenCalledTimes(3)
   })
   it('clears pending enrichment and related rows when history is cleared', async () => {
-    mockInvoke.mockResolvedValueOnce(page(['keyword'])).mockResolvedValueOnce(undefined)
+    searchInvoke.mockResolvedValueOnce(page(['keyword'])).mockResolvedValueOnce(undefined)
     await useClipboardStore.getState().enterSearchMode('query')
     useClipboardStore.setState({ relatedClipIds: ['old-related'] })
     await useClipboardStore.getState().clearAllClips()
@@ -681,8 +705,27 @@ describe('progressive History retrieval', () => {
       semanticPending: false,
     })
   })
+  it('closes the search resource if the query changes before enrichment starts', async () => {
+    let prepare!: (rid: number) => void
+    searchInvoke.mockResolvedValueOnce(page(['keyword']))
+    await useClipboardStore.getState().enterSearchMode('old')
+    mockInvoke.mockImplementationOnce(
+      () =>
+        new Promise<number>(resolve => {
+          prepare = resolve
+        })
+    )
+    await vi.advanceTimersByTimeAsync(175)
+    useClipboardStore.getState().prepareSearch('new')
+    prepare(29)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(searchInvoke).toHaveBeenCalledTimes(1)
+    expect(mockClose).toHaveBeenCalledExactlyOnceWith(29)
+  })
   it('preserves usable keyword rows when semantic retrieval fails', async () => {
-    mockInvoke.mockResolvedValueOnce(page(['keyword'])).mockRejectedValueOnce(new Error('offline'))
+    searchInvoke
+      .mockResolvedValueOnce(page(['keyword']))
+      .mockRejectedValueOnce(new Error('offline'))
     await useClipboardStore.getState().enterSearchMode('query')
     await vi.advanceTimersByTimeAsync(175)
     expect(useClipboardStore.getState().clips.map(clip => clip.id)).toEqual(['keyword'])

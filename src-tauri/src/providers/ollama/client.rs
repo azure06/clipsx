@@ -133,10 +133,13 @@ async fn response_json(
     if !response.status().is_success() {
         return Err(response_error(response, operation).await);
     }
-    response
-        .json()
-        .await
-        .map_err(|error| ProviderError::InvalidOutput(error.to_string()))
+    response.json().await.map_err(|error| {
+        if error.is_timeout() {
+            ProviderError::Timeout
+        } else {
+            ProviderError::InvalidOutput(error.to_string())
+        }
+    })
 }
 
 async fn response_error(response: reqwest::Response, operation: &str) -> ProviderError {
