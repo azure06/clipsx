@@ -109,6 +109,24 @@ async fn activate(repo: &HistoryRepository, preset: &AiModelPreset) {
         .unwrap();
 }
 
+async fn fail_build(repo: &HistoryRepository, clip: &str) -> Generation {
+    let building = generation_by_status(repo, "building")
+        .await
+        .unwrap()
+        .unwrap();
+    sqlx::query(
+        "UPDATE search_index_jobs SET status='failed',attempt_count=3,last_error='provider_timeout'
+         WHERE generation_id=? AND clip_id=?",
+    )
+    .bind(&building.id)
+    .bind(clip)
+    .execute(&repo.pool)
+    .await
+    .unwrap();
+    settle_generation(repo, &building).await.unwrap();
+    building
+}
+
 #[tokio::test]
 async fn provider_switch_keeps_retained_binding_across_restart_and_isolates_failures() {
     let (_root, mut repo) = tests::repository().await;
@@ -138,35 +156,64 @@ async fn provider_switch_keeps_retained_binding_across_restart_and_isolates_fail
             .await
             .unwrap();
     assert!(saved.contains(&document.presets[0].id));
+    let replacement = fail_build(&repo, &clip).await;
     repo.pool = sqlx::SqlitePool::connect_with(repo.pool.connect_options().as_ref().clone())
         .await
         .unwrap();
+    let failed = status(&repo).await.unwrap();
+    assert_eq!(failed.active_space_id, Some(original.space_id.clone()));
+    assert_eq!(failed.pending_space_id, Some(replacement.space_id.clone()));
+    assert_eq!(failed.failed_jobs, 1);
+    assert_eq!(failed_jobs(&repo, 1).await.unwrap()[0].clip.id, clip);
+    assert_eq!(index_pending(&repo).await.unwrap(), 0);
     let eligible = HashMap::from([(clip.clone(), 1)]);
     let before_old = old.calls.load(Ordering::SeqCst);
     let before_new = new.calls.load(Ordering::SeqCst);
-    let matches = semantic_matches(&repo, "retained evidence", &eligible, 10)
-        .await
-        .unwrap();
+    let matches = semantic_matches(
+        &repo,
+        "retained evidence",
+        &eligible,
+        10,
+        crate::search::TOOL_SEMANTIC_BUDGET,
+    )
+    .await
+    .unwrap();
     assert_eq!(matches[0].0, clip);
     assert!(matches[0].1 > 0.99);
     assert!(old.calls.load(Ordering::SeqCst) > before_old);
     assert_eq!(new.calls.load(Ordering::SeqCst), before_new);
+    retry_failed(&repo).await.unwrap();
+    assert_eq!(status(&repo).await.unwrap().failed_jobs, 0);
 
     document.connections[0].base_url = new.endpoint.clone();
     configuration::import(&repo, document.clone())
         .await
         .unwrap();
-    assert!(semantic_matches(&repo, "retained evidence", &eligible, 10)
-        .await
-        .is_err());
+    assert!(semantic_matches(
+        &repo,
+        "retained evidence",
+        &eligible,
+        10,
+        crate::search::TOOL_SEMANTIC_BUDGET
+    )
+    .await
+    .is_err());
     assert_eq!(new.calls.load(Ordering::SeqCst), before_new);
     assert!(status(&repo).await.unwrap().diagnostic.is_none());
     document.connections[0].base_url = old.endpoint.clone();
-    configuration::import(&repo, document).await.unwrap();
-    old.revision.store(1, Ordering::SeqCst);
-    let error = semantic_matches(&repo, "retained evidence", &eligible, 10)
+    configuration::import(&repo, document.clone())
         .await
-        .unwrap_err();
+        .unwrap();
+    old.revision.store(1, Ordering::SeqCst);
+    let error = semantic_matches(
+        &repo,
+        "retained evidence",
+        &eligible,
+        10,
+        crate::search::TOOL_SEMANTIC_BUDGET,
+    )
+    .await
+    .unwrap_err();
     assert_eq!(
         crate::failure::OperationFailure::from_error(&error).code,
         crate::failure::FailureCode::EmbeddingSpaceChanged
@@ -178,13 +225,27 @@ async fn provider_switch_keeps_retained_binding_across_restart_and_isolates_fail
     assert!(current.diagnostic.is_none());
     let before_old = old.calls.load(Ordering::SeqCst);
     assert!(
-        semantic_matches(&repo, "replacement evidence", &eligible, 10)
-            .await
-            .unwrap()[0]
+        semantic_matches(
+            &repo,
+            "replacement evidence",
+            &eligible,
+            10,
+            crate::search::TOOL_SEMANTIC_BUDGET
+        )
+        .await
+        .unwrap()[0]
             .1
             > 0.99
     );
     assert_eq!(old.calls.load(Ordering::SeqCst), before_old);
+
+    activate(&repo, &document.presets[0]).await;
+    fail_build(&repo, &clip).await;
+    activate(&repo, &document.presets[1]).await;
+    let reverted = status(&repo).await.unwrap();
+    assert_eq!(reverted.active_space_id, Some(replacement.space_id));
+    assert_eq!(reverted.pending_space_id, None);
+    assert_eq!(reverted.phase, ProviderPhase::Ready);
 }
 
 #[tokio::test]
@@ -202,9 +263,15 @@ async fn legacy_binding_is_saved_only_after_matching_the_full_descriptor() {
         .await
         .unwrap();
     server.revision.store(1, Ordering::SeqCst);
-    assert!(semantic_matches(&repo, "evidence", &HashMap::new(), 10)
-        .await
-        .is_err());
+    assert!(semantic_matches(
+        &repo,
+        "evidence",
+        &HashMap::new(),
+        10,
+        crate::search::TOOL_SEMANTIC_BUDGET
+    )
+    .await
+    .is_err());
     let binding: Option<String> =
         sqlx::query_scalar("SELECT provider_binding_json FROM search_embedding_spaces")
             .fetch_one(&repo.pool)
@@ -212,13 +279,25 @@ async fn legacy_binding_is_saved_only_after_matching_the_full_descriptor() {
             .unwrap();
     assert!(binding.is_none());
     server.revision.store(0, Ordering::SeqCst);
-    semantic_matches(&repo, "evidence", &HashMap::new(), 10)
-        .await
-        .unwrap();
+    semantic_matches(
+        &repo,
+        "evidence",
+        &HashMap::new(),
+        10,
+        crate::search::TOOL_SEMANTIC_BUDGET,
+    )
+    .await
+    .unwrap();
     configuration::remove(&repo, None, Some(document.presets[0].id.clone()))
         .await
         .unwrap();
-    assert!(semantic_matches(&repo, "evidence", &HashMap::new(), 10)
-        .await
-        .is_err());
+    assert!(semantic_matches(
+        &repo,
+        "evidence",
+        &HashMap::new(),
+        10,
+        crate::search::TOOL_SEMANTIC_BUDGET
+    )
+    .await
+    .is_err());
 }

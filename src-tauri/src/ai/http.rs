@@ -14,6 +14,16 @@ pub(crate) async fn request_json(
     credential: &str,
     body: Option<&Value>,
 ) -> ProviderResult<Value> {
+    request_json_with_timeout(connection, url, credential, body, Duration::from_secs(60)).await
+}
+
+pub(crate) async fn request_json_with_timeout(
+    connection: &AiConnection,
+    url: &url::Url,
+    credential: &str,
+    body: Option<&Value>,
+    timeout: Duration,
+) -> ProviderResult<Value> {
     let base = validate_connection(connection)
         .map_err(|_| ProviderError::InvalidConfiguration("invalid endpoint".into()))?;
     if !allowed_destination(connection, &base, url) {
@@ -24,7 +34,7 @@ pub(crate) async fn request_json(
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(60))
+        .timeout(timeout)
         .build()
         .map_err(|_| ProviderError::Unavailable("network unavailable".into()))?;
     let mut request = if let Some(body) = body {
@@ -57,8 +67,7 @@ pub(crate) async fn request_json(
         let mut stream = response.bytes_stream();
         let mut body = Vec::new();
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk
-                .map_err(|_| ProviderError::Unavailable("provider response interrupted".into()))?;
+            let chunk = chunk.map_err(response_interrupted)?;
             if body.len().saturating_add(chunk.len()) > 16 * 1024 {
                 break;
             }
@@ -77,8 +86,7 @@ pub(crate) async fn request_json(
     let mut stream = response.bytes_stream();
     let mut bytes = vec![];
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk
-            .map_err(|_| ProviderError::Unavailable("provider response interrupted".into()))?;
+        let chunk = chunk.map_err(response_interrupted)?;
         if bytes.len() + chunk.len() > 16 * 1024 * 1024 {
             return Err(ProviderError::InvalidOutput(
                 "provider response exceeds its limit".into(),
@@ -88,6 +96,14 @@ pub(crate) async fn request_json(
     }
     serde_json::from_slice(&bytes)
         .map_err(|_| ProviderError::InvalidOutput("invalid provider response".into()))
+}
+
+fn response_interrupted(error: reqwest::Error) -> ProviderError {
+    if error.is_timeout() {
+        ProviderError::Timeout
+    } else {
+        ProviderError::Unavailable("provider response interrupted".into())
+    }
 }
 
 /// Inspect only bounded, recognized rejection categories. Never expose provider text.

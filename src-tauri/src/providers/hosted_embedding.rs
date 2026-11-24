@@ -8,13 +8,14 @@ use super::{
 };
 #[cfg(test)]
 use crate::ai::http::allowed_destination;
-use crate::ai::http::request_json;
+use crate::ai::http::request_json_with_timeout;
 use crate::ai::{
     configuration::validate_connection,
     contracts::{AiConnection, AiProviderKind, EmbeddingPresetOptions},
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
+use std::time::Duration;
 
 pub struct HostedEmbeddingProvider {
     connection: AiConnection,
@@ -22,6 +23,7 @@ pub struct HostedEmbeddingProvider {
     model: String,
     credential: String,
     options: EmbeddingPresetOptions,
+    timeout: Duration,
 }
 impl HostedEmbeddingProvider {
     pub fn new(
@@ -29,6 +31,7 @@ impl HostedEmbeddingProvider {
         model: String,
         credential: String,
         options: EmbeddingPresetOptions,
+        timeout: Duration,
     ) -> ProviderResult<Self> {
         if !matches!(
             connection.provider,
@@ -54,6 +57,7 @@ impl HostedEmbeddingProvider {
             model,
             credential,
             options,
+            timeout,
         })
     }
     async fn embed(&self, inputs: &[String], query: bool) -> ProviderResult<Vec<Vec<f32>>> {
@@ -68,7 +72,7 @@ impl HostedEmbeddingProvider {
                 ));
             }
             let (path, body) = self.request_body(batch, query);
-            let result = request_json(
+            let result = request_json_with_timeout(
                 &self.connection,
                 &self
                     .base
@@ -76,6 +80,7 @@ impl HostedEmbeddingProvider {
                     .map_err(|_| ProviderError::InvalidConfiguration("invalid endpoint".into()))?,
                 &self.credential,
                 Some(&body),
+                self.timeout,
             )
             .await?;
             vectors.extend(parse_vectors(
@@ -311,6 +316,7 @@ mod tests {
                 task_policy: policy.into(),
                 hosted_indexing_enabled: true,
             },
+            Duration::from_secs(2),
         )
         .unwrap()
     }

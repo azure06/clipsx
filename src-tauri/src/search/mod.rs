@@ -9,8 +9,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::{
     collections::{HashMap, HashSet},
-    time::Instant,
+    time::{Duration, Instant},
 };
+use tauri::Manager;
 
 const PROJECTION_VERSION: i64 = 3;
 pub const FTS_SOURCE_ID: &str = "builtin.search.fts";
@@ -18,6 +19,41 @@ pub const SEMANTIC_TEXT_SOURCE_ID: &str = "builtin.search.semantic_text";
 const RRF_K: f64 = 60.0;
 const SOURCE_CANDIDATE_LIMIT: usize = 5_000;
 const PROJECTION_REBUILD_BATCH_SIZE: i64 = 100;
+pub(crate) const TOOL_SEMANTIC_BUDGET: Duration = Duration::from_secs(4);
+const LIVE_SEMANTIC_BUDGET: Duration = Duration::from_secs(30);
+
+#[derive(Default)]
+pub(crate) struct InteractiveSearch(tokio_util::sync::CancellationToken);
+
+impl tauri::Resource for InteractiveSearch {
+    fn close(self: std::sync::Arc<Self>) {
+        self.0.cancel();
+    }
+}
+
+impl InteractiveSearch {
+    pub(crate) async fn run<T, F>(
+        webview: &tauri::Webview,
+        cancellation_id: Option<tauri::ResourceId>,
+        work: impl FnOnce(Duration) -> F,
+    ) -> Result<T>
+    where
+        F: std::future::Future<Output = Result<T>>,
+    {
+        let Some(id) = cancellation_id else {
+            return work(TOOL_SEMANTIC_BUDGET).await;
+        };
+        let request = webview
+            .resources_table()
+            .get::<Self>(id)
+            .map_err(|_| crate::failure::FailureCode::ProviderCancelled.failure())?;
+        request
+            .0
+            .run_until_cancelled(work(LIVE_SEMANTIC_BUDGET))
+            .await
+            .ok_or_else(|| crate::failure::FailureCode::ProviderCancelled.failure())?
+    }
+}
 
 // ─── Domain ───────────────────────────────────────────────────────────────────
 
@@ -357,6 +393,7 @@ struct SourceContext<'a> {
     query: &'a str,
     fts_query: Option<&'a str>,
     semantic_eligible: Option<&'a HashMap<String, i64>>,
+    semantic_budget: Duration,
 }
 
 // async_trait adds must_use to an already must-use boxed Future.
@@ -482,6 +519,7 @@ impl SearchSource for SemanticTextSearchSource {
             context.query,
             eligible,
             SOURCE_CANDIDATE_LIMIT + 1,
+            context.semantic_budget,
         )
         .await?;
         let rows = rows
@@ -564,10 +602,11 @@ fn fuse_source(
     }
 }
 
-pub async fn search(
+pub(crate) async fn search(
     repo: &HistoryRepository,
     request: &SearchRequest,
     settings: &SearchSettings,
+    semantic_budget: Duration,
 ) -> Result<SearchPage> {
     let search_started = Instant::now();
     let raw = request.query.trim();
@@ -635,6 +674,7 @@ pub async fn search(
         query: raw,
         fts_query: fts_query.as_deref(),
         semantic_eligible: semantic_eligible.as_ref(),
+        semantic_budget,
     };
     let results = join_all(sources.iter().map(|source| source.candidates(&context))).await;
     let mut outcomes = Vec::new();
@@ -989,6 +1029,25 @@ mod tests {
             CaptureSettings, CapturedPayload, CapturedRepresentation, CapturedSnapshot, ListRequest,
         },
     };
+
+    #[tokio::test]
+    async fn closing_an_interactive_search_cancels_its_native_work() {
+        let mut resources = tauri::ResourceTable::default();
+        let id = resources.add(InteractiveSearch::default());
+        let search = resources.get::<InteractiveSearch>(id).unwrap();
+        let mut work = Box::pin(search.0.run_until_cancelled(std::future::pending::<()>()));
+        assert!(futures::poll!(work.as_mut()).is_pending());
+        resources.close(id).unwrap();
+        assert!(work.await.is_none());
+    }
+
+    async fn search(
+        repo: &HistoryRepository,
+        request: &SearchRequest,
+        settings: &SearchSettings,
+    ) -> Result<SearchPage> {
+        super::search(repo, request, settings, TOOL_SEMANTIC_BUDGET).await
+    }
 
     fn request(query: &str) -> SearchRequest {
         SearchRequest {

@@ -69,6 +69,8 @@ it('shows real indexing progress and disabled OCR independently of model assignm
     indexBytes: 0,
     estimatedRebuildBytes: 0,
     minimumSimilarityPercent: null,
+    indexingTimeoutSeconds: 120,
+    indexingTimeoutChoices: [60, 120, 300],
   }
   render(
     <IntelligenceOverview

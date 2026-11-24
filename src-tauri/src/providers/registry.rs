@@ -2,6 +2,7 @@ pub fn text_embedding_provider(
     config: &TextEmbeddingProviderConfig,
     endpoint: &str,
     model: Option<&str>,
+    timeout: std::time::Duration,
 ) -> ProviderResult<Box<dyn TextEmbeddingProvider>> {
     if !config.enabled {
         return Err(ProviderError::Disabled);
@@ -10,6 +11,7 @@ pub fn text_embedding_provider(
         OLLAMA_TEXT_EMBEDDING_ID => Ok(Box::new(OllamaTextEmbeddingProvider::new(
             endpoint,
             model.unwrap_or(&config.model).to_string(),
+            timeout,
         )?)),
         value => Err(ProviderError::Unavailable(format!(
             "unknown text-embedding provider {value}"

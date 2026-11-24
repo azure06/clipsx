@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { KEYWORD_DELAY_MS, SEMANTIC_DELAY_MS } from '../search/progressive'
+import { KEYWORD_DELAY_MS, searchWhileCurrent, SEMANTIC_DELAY_MS } from '../search/progressive'
 import type {
   ClipFilters,
   ClipMatch,
@@ -18,8 +18,11 @@ export const emptyFilters: ClipFilters = {
   representationFamilies: [],
   facetIds: [],
 }
-type Search = (request: ClipSearchRequest) => Promise<ClipSearchResult>
-const nativeSearch: Search = request => invoke('assistant_search_clips', { request })
+type Search = (request: ClipSearchRequest, signal?: AbortSignal) => Promise<ClipSearchResult>
+const nativeSearch: Search = (request, signal) =>
+  signal
+    ? searchWhileCurrent('assistant_search_clips', request, signal)
+    : invoke('assistant_search_clips', { request })
 export function useProgressiveSearch(
   query: string,
   filters: ClipFilters,
@@ -33,10 +36,12 @@ export function useProgressiveSearch(
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [error, setError] = useState(false)
   const [pending, setPending] = useState(false)
+  const [relatedPending, setRelatedPending] = useState(false)
   const [paging, setPaging] = useState(false)
   const [composing, setComposing] = useState(false)
   const epoch = useRef(0)
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
+  const enrichment = useRef<AbortController | null>(null)
   const context = JSON.stringify({ query, filters })
   const [exclusionContext, setExclusionContext] = useState(context)
   const currentExcluded = exclusionContext === context ? excluded : []
@@ -48,18 +53,25 @@ export function useProgressiveSearch(
     epoch.current++
     timers.current.forEach(clearTimeout)
     timers.current = []
+    enrichment.current?.abort()
+    enrichment.current = null
   }, [])
   useLayoutEffect(invalidate, [context, enabled, invalidate])
   const run = useCallback(
     async (mode: 'keyword' | 'hybrid', token: number, requestFilters: ClipFilters) => {
+      const controller = mode === 'hybrid' ? new AbortController() : null
+      if (controller) enrichment.current = controller
       try {
-        const response = await search({
-          query,
-          filters: requestFilters,
-          mode,
-          limit: 20,
-          cursor: null,
-        })
+        const response = await search(
+          {
+            query,
+            filters: requestFilters,
+            mode,
+            limit: 20,
+            cursor: null,
+          },
+          controller?.signal
+        )
         if (epoch.current !== token) return
         if (mode === 'keyword') {
           setKeyword(response)
@@ -76,6 +88,11 @@ export function useProgressiveSearch(
           setError(true)
           setPending(false)
         } else setRelated([])
+      } finally {
+        if (controller && enrichment.current === controller) {
+          enrichment.current = null
+          setRelatedPending(false)
+        }
       }
     },
     [query, search]
@@ -85,6 +102,8 @@ export function useProgressiveSearch(
       invalidate()
       setRelated([])
       setPaging(false)
+      const enrich = !composing && semanticReady && Boolean(query.trim())
+      setRelatedPending(enrich)
       if (composing) return
       const token = epoch.current
       const requestFilters = {
@@ -97,7 +116,7 @@ export function useProgressiveSearch(
         timers.current.push(
           setTimeout(() => void run('keyword', token, requestFilters), KEYWORD_DELAY_MS)
         )
-      if (semanticReady && query.trim())
+      if (enrich)
         timers.current.push(
           setTimeout(() => void run('hybrid', token, requestFilters), SEMANTIC_DELAY_MS)
         )
@@ -109,6 +128,7 @@ export function useProgressiveSearch(
     else {
       invalidate()
       setPending(false)
+      setRelatedPending(false)
       setPaging(false)
     }
     return invalidate
@@ -159,6 +179,7 @@ export function useProgressiveSearch(
     selectedId,
     setSelectedId,
     pending,
+    relatedPending,
     paging,
     loadMore,
     error,

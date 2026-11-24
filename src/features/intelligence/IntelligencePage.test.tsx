@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TextEmbeddingStatus } from '../../shared/types/v2'
 import { IntelligencePage } from './IntelligencePage'
@@ -31,6 +32,8 @@ const readyStatus = (overrides: Partial<TextEmbeddingStatus> = {}): TextEmbeddin
   estimatedRebuildBytes: 4096,
   model: 'nomic-embed-text',
   minimumSimilarityPercent: null,
+  indexingTimeoutSeconds: 120,
+  indexingTimeoutChoices: [60, 120, 300],
   ...overrides,
 })
 
@@ -314,6 +317,46 @@ describe('IntelligencePage indexing actions', () => {
 
     await screen.findByText('Ready')
     expect(screen.queryByText('28 clips pending')).not.toBeInTheDocument()
+  })
+
+  it('saves the indexing timeout before retrying failed clips', async () => {
+    const user = userEvent.setup()
+    let finishSaving!: () => void
+    const saving = new Promise<void>(resolve => {
+      finishSaving = resolve
+    })
+    currentStatus = readyStatus({
+      phase: 'degraded',
+      failedJobs: 1,
+      diagnostic: 'provider_timeout',
+    })
+    const base = invokeMock.getMockImplementation() as (command: string) => Promise<unknown>
+    invokeMock.mockImplementation((command: string, args?: { timeoutSeconds: number }) => {
+      if (command === 'update_text_embedding_timeout' && args) {
+        currentStatus = { ...currentStatus, indexingTimeoutSeconds: args.timeoutSeconds }
+        return saving
+      }
+      if (command === 'retry_text_embedding_provider') return Promise.resolve()
+      return base(command)
+    })
+    render(<IntelligencePage initialSection="indexing" />)
+    expect(await screen.findByText(/embedding request timed out/)).toBeVisible()
+    await user.click(screen.getByText('Advanced indexing settings'))
+    const timeout = screen.getByRole('combobox', { name: 'Indexing request timeout' })
+    expect(timeout).toHaveTextContent('2 minutes')
+    await user.click(timeout)
+    await user.click(screen.getByRole('option', { name: '5 minutes' }))
+    expect(screen.getByRole('button', { name: 'Retry failed clips' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Index missing' })).toBeDisabled()
+    finishSaving()
+    await waitFor(() => expect(timeout).toHaveTextContent('5 minutes'))
+    expect(invokeMock).toHaveBeenCalledWith('update_text_embedding_timeout', {
+      timeoutSeconds: 300,
+    })
+    expect(invokeMock).not.toHaveBeenCalledWith('retry_text_embedding_provider')
+    await user.click(screen.getByRole('button', { name: 'Retry failed clips' }))
+    expect(invokeMock).toHaveBeenCalledWith('retry_text_embedding_provider')
+    expect(invokeMock).not.toHaveBeenCalledWith('reindex_text_embeddings')
   })
 
   it('clears loading and reports command and status-refresh failures', async () => {

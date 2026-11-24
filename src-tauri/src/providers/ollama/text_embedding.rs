@@ -17,14 +17,16 @@ const PROVIDER_VERSION: &str = "1";
 pub struct OllamaTextEmbeddingProvider {
     client: OllamaClient,
     model: String,
+    timeout: Duration,
     expected_revision: std::sync::Mutex<Option<String>>,
 }
 
 impl OllamaTextEmbeddingProvider {
-    pub fn new(endpoint: &str, model: String) -> ProviderResult<Self> {
+    pub fn new(endpoint: &str, model: String, timeout: Duration) -> ProviderResult<Self> {
         Ok(Self {
             client: OllamaClient::new(endpoint)?,
             model,
+            timeout,
             expected_revision: std::sync::Mutex::new(None),
         })
     }
@@ -44,7 +46,7 @@ impl OllamaTextEmbeddingProvider {
                 .post(
                     "api/embed",
                     serde_json::json!({"model": self.model, "input": batch, "truncate": false}),
-                    Duration::from_secs(60),
+                    self.timeout,
                 )
                 .await?;
             vectors.extend(parse_vectors(&response, batch.len())?);
@@ -197,7 +199,9 @@ mod tests {
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
-        let provider = OllamaTextEmbeddingProvider::new(&endpoint, "fixture".into()).unwrap();
+        let provider =
+            OllamaTextEmbeddingProvider::new(&endpoint, "fixture".into(), Duration::from_secs(2))
+                .unwrap();
         let original = provider.describe().await.unwrap();
         provider.verify_space(&original).await.unwrap();
         provider

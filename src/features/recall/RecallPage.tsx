@@ -597,9 +597,13 @@ export function RecallPage({
                 {t('recallPage.searchFailed')}
               </p>
             )}
-            {!search.pending && !search.error && search.keyword?.items.length === 0 && (
-              <p className="py-5 text-xs text-slate-500">{t('recallPage.noMatches')}</p>
-            )}
+            {!search.pending &&
+              !search.relatedPending &&
+              !search.error &&
+              search.keyword?.items.length === 0 &&
+              search.related.length === 0 && (
+                <p className="py-5 text-xs text-slate-500">{t('recallPage.noMatches')}</p>
+              )}
             <ul className="space-y-2">{search.keyword?.items.map(resultRow)}</ul>
             {search.keyword?.nextCursor && (
               <Button
@@ -612,11 +616,16 @@ export function RecallPage({
                 {t('recallPage.moreResults')}
               </Button>
             )}
-            {search.related.length > 0 && (
+            {(search.relatedPending || search.related.length > 0) && (
               <>
                 <h3 className="mt-4 mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">
                   {t('recallPage.relatedMatches')}
                 </h3>
+                {search.relatedPending && (
+                  <p role="status" className="text-xs text-slate-500">
+                    {t('recallPage.searching')}
+                  </p>
+                )}
                 <ul className="space-y-2">{search.related.map(resultRow)}</ul>
               </>
             )}

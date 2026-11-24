@@ -3,7 +3,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { RecallPage } from './RecallPage'
-vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(),
+  Resource: class {
+    constructor(readonly rid: number) {}
+    close() {
+      return Promise.resolve()
+    }
+  },
+}))
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(() => Promise.resolve(() => {})) }))
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }),
@@ -73,6 +81,8 @@ beforeEach(() => {
             })
       case 'recall_thread_list':
         return Promise.resolve([thread])
+      case 'prepare_interactive_search':
+        return Promise.resolve(27)
       case 'assistant_search_clips':
         return Promise.resolve({
           apiVersion: 1,

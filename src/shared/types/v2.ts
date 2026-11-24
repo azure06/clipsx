@@ -13,6 +13,8 @@ export type ClipboardOutputRequest = {
 }
 
 export type TextEmbeddingStatus = {
+  indexingTimeoutSeconds: number
+  indexingTimeoutChoices: number[]
   enabled: boolean
   phase:
     | 'not_configured'

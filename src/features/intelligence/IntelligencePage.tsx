@@ -66,7 +66,14 @@ const formatBytes = (bytes: number): string => {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
+const indexingTimedOut = (diagnostic: string | null) =>
+  diagnostic === 'provider_timeout' ||
+  diagnostic === 'The model provider did not finish within the allowed time.'
+
 const explainOllamaDiagnostic = (diagnostic: string): string => {
+  if (indexingTimedOut(diagnostic)) {
+    return i18n.t('desktopUi.indexingRequestTimedOut')
+  }
   if (/provider (is )?unavailable/.test(diagnostic)) {
     return i18n.t('desktopUi.ollamaWasUnavailableDuringTheLastAttemptYourClips')
   }
@@ -175,6 +182,7 @@ export const IntelligencePage = ({
   const [settingsSaving, setSettingsSaving] = useState(false)
   const [thresholdDraft, setThresholdDraft] = useState('70')
   const [thresholdSaving, setThresholdSaving] = useState(false)
+  const [timeoutSaving, setTimeoutSaving] = useState(false)
   const [ocrStatus, setOcrStatus] = useState<OcrRuntimeStatus | null>(null)
   const [ocrSaving, setOcrSaving] = useState(false)
   const [activeSection, setActiveSection] = useState<(typeof intelligenceSections)[number]['id']>(
@@ -320,8 +328,9 @@ export const IntelligencePage = ({
     }
   }
 
+  const indexActionDisabled = activeIndexAction !== null || clearingIndex || timeoutSaving
   const startIndexAction = async (action: IndexAction, command: string) => {
-    if (activeIndexAction) return
+    if (indexActionDisabled) return
     setActiveIndexAction({ kind: action, stage: 'submitting' })
     try {
       await invoke(command)
@@ -425,6 +434,22 @@ export const IntelligencePage = ({
   const parsedThreshold = Number(thresholdDraft)
   const thresholdDraftIsValid =
     Number.isInteger(parsedThreshold) && parsedThreshold >= 1 && parsedThreshold <= 100
+
+  const updateIndexingTimeout = async (timeoutSeconds: string) => {
+    setTimeoutSaving(true)
+    try {
+      await invoke('update_text_embedding_timeout', { timeoutSeconds: Number(timeoutSeconds) })
+      await loadStatus()
+    } catch (e) {
+      toast({
+        title: i18n.t('desktopUi.couldNotSaveIndexingTimeout'),
+        description: toErrorMessage(e),
+        type: 'error',
+      })
+    } finally {
+      setTimeoutSaving(false)
+    }
+  }
 
   // Progress bar math
   const indexing = status?.phase === 'indexing'
@@ -616,13 +641,19 @@ export const IntelligencePage = ({
                       </div>
                       <button
                         className="flex shrink-0 items-center gap-1 font-semibold underline decoration-amber-500/40 underline-offset-2 hover:text-amber-950 disabled:opacity-50 dark:hover:text-white"
-                        disabled={activeIndexAction !== null}
+                        disabled={indexActionDisabled}
                         onClick={() => void handleRetry()}
                       >
                         {activeIndexAction?.kind === 'retry' && (
                           <Loader2 className="h-3 w-3 animate-spin" />
                         )}
-                        <Trans i18nKey="desktopUi.retryNow" />
+                        <Trans
+                          i18nKey={
+                            status.failedJobs > 0
+                              ? 'desktopUi.retryFailedClips'
+                              : 'desktopUi.retryNow'
+                          }
+                        />
                       </button>
                     </div>
                     {failedJobs.length > 0 && (
@@ -652,6 +683,11 @@ export const IntelligencePage = ({
                                 <p className="truncate text-[11px] font-medium text-slate-800 dark:text-slate-100">
                                   {job.clip.historyPreview.title}
                                 </p>
+                                {indexingTimedOut(job.lastError) && (
+                                  <p className="mt-0.5 text-[10px] text-amber-800 dark:text-amber-200">
+                                    <Trans i18nKey="desktopUi.indexingRequestTimedOut" />
+                                  </p>
+                                )}
                                 <p className="mt-0.5 truncate text-[10px] text-slate-500 dark:text-slate-400">
                                   {job.clip.historyPreview.subtitle ??
                                     job.clip.sourceAppName ??
@@ -707,7 +743,7 @@ export const IntelligencePage = ({
                     size="sm"
                     leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
                     isLoading={activeIndexAction?.kind === 'reindex'}
-                    disabled={activeIndexAction !== null || clearingIndex}
+                    disabled={indexActionDisabled}
                     onClick={() => void handleReindex()}
                   >
                     <Trans i18nKey="desktopUi.reindexAll" />
@@ -717,7 +753,7 @@ export const IntelligencePage = ({
                     size="sm"
                     leftIcon={<Plus className="h-3.5 w-3.5" />}
                     isLoading={activeIndexAction?.kind === 'index_missing'}
-                    disabled={activeIndexAction !== null || clearingIndex}
+                    disabled={indexActionDisabled}
                     onClick={() => void handleIndexMissing()}
                   >
                     <Trans i18nKey="desktopUi.indexMissing" />
@@ -727,7 +763,7 @@ export const IntelligencePage = ({
                     size="sm"
                     leftIcon={<Trash2 className="h-3.5 w-3.5" />}
                     isLoading={clearingIndex}
-                    disabled={clearingIndex || activeIndexAction !== null}
+                    disabled={indexActionDisabled}
                     onClick={() => void handleClearIndex()}
                   >
                     <Trans i18nKey="desktopUi.resetIndex" />
@@ -737,6 +773,26 @@ export const IntelligencePage = ({
                   <Trans i18nKey="desktopUi.keywordSearchAlwaysStaysOnIfMeaningSearchIs" />
                 </p>
               </div>
+            )}
+            {status && (
+              <details className="rounded-xl border border-slate-200/60 p-3 dark:border-white/10">
+                <summary className="cursor-pointer text-xs font-medium text-slate-700 dark:text-slate-200">
+                  <Trans i18nKey="desktopUi.advancedIndexingSettings" />
+                </summary>
+                <div className="mt-3">
+                  <Select
+                    label={i18n.t('desktopUi.indexingRequestTimeout')}
+                    helpText={i18n.t('desktopUi.indexingRequestTimeoutHelp')}
+                    value={String(status.indexingTimeoutSeconds)}
+                    options={status.indexingTimeoutChoices.map(seconds => ({
+                      value: String(seconds),
+                      label: i18n.t('desktopUi.indexingTimeoutMinutes', { count: seconds / 60 }),
+                    }))}
+                    disabled={timeoutSaving}
+                    onChange={seconds => void updateIndexingTimeout(seconds)}
+                  />
+                </div>
+              </details>
             )}
           </div>
         )}
